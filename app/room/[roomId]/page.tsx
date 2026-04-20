@@ -21,26 +21,40 @@ import AgoraRTC, {
 
 const AGORA_APP_ID = "565e38e7aa3c4d71845a1f0205279df1";
 
-const AgoraVoiceChat = ({ roomId, userId, inGame }: { roomId: string, userId: string, inGame: boolean }) => {
-  const [isJoined, setIsJoined] = useState(false);
-  const [micOn, setMicOn] = useState(false);
-
+const AgoraVoiceChat = ({ roomId, userId, isJoined, micOn, setIsJoined, setMicOn, inGame }: { 
+  roomId: string, 
+  userId: string, 
+  isJoined: boolean, 
+  micOn: boolean, 
+  setIsJoined: (v: boolean) => void, 
+  setMicOn: (v: boolean) => void,
+  inGame: boolean 
+}) => {
   // Agora numeric UID - stable based on userId
-  const agoraUid = useMemo(() => userId ? parseInt(userId.slice(-8), 16) % 1000000 : null, [userId]);
+  const agoraUid = useMemo(() => {
+    if (!userId) return null;
+    // Simple hash to numeric
+    let hash = 0;
+    for (let i = 0; i < userId.length; i++) {
+      hash = ((hash << 5) - hash) + userId.charCodeAt(i);
+      hash |= 0;
+    }
+    return Math.abs(hash) % 1000000;
+  }, [userId]);
 
-  // 1. Join logic - stay joined as long as we are in room (waiting/intro/playing)
+  // 1. Join logic - stay joined as long as roomId/userId are stable
   useJoin({
     appid: AGORA_APP_ID,
     channel: roomId,
     token: null,
     uid: agoraUid,
-  }, isJoined && inGame);
+  }, isJoined && !!userId);
 
-  // 2. Local tracks - always initialize if joined
-  const { localMicrophoneTrack } = useLocalMicrophoneTrack(isJoined && inGame);
+  // 2. Local tracks - always initialize if joined and in room
+  const { localMicrophoneTrack } = useLocalMicrophoneTrack(isJoined);
   
   // Publish once joined
-  usePublish([localMicrophoneTrack], isJoined && inGame);
+  usePublish([localMicrophoneTrack], isJoined);
 
   // Handle Mute/Unmute properly by enabling/disabling the track
   useEffect(() => {
@@ -55,23 +69,47 @@ const AgoraVoiceChat = ({ roomId, userId, inGame }: { roomId: string, userId: st
 
   useEffect(() => {
     audioTracks.forEach(track => {
-      if (!track.isPlaying) {
-        track.play();
-      }
+      const user = remoteUsers.find(u => u.audioTrack === track);
+      const uid = user?.uid;
+      
+      const playTrack = async () => {
+        try {
+          if (uid) {
+            const containerId = `agora-remote-audio-${uid}`;
+            const container = document.getElementById(containerId);
+            if (container) {
+              await (track as any).play(containerId);
+            } else {
+              await track.play();
+            }
+          } else {
+            await track.play();
+          }
+        } catch (err) {
+          console.error("Agora Linux Autoplay Fix: track.play() failed", err);
+        }
+      };
+      
+      playTrack();
     });
-  }, [audioTracks]);
+  }, [audioTracks, remoteUsers]);
 
   // Mic toggle handler
   const toggleMic = () => {
     setMicOn(!micOn);
   };
 
-  // Important: Component remains mounted during game transitions as long as either waiting or playing
-  if (!inGame) return null;
+  if (!userId) return null;
 
   return (
     <>
-      {!isJoined && (
+      <div className="hidden" id="agora-audio-containers">
+        {remoteUsers.map(user => (
+          <div key={user.uid} id={`agora-remote-audio-${user.uid}`} />
+        ))}
+      </div>
+
+      {!isJoined && inGame && (
          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-stone-900/80 backdrop-blur-sm p-4">
            <div className="bg-stone-800 border border-stone-700 rounded-2xl p-6 md:p-8 max-w-sm w-full text-center shadow-2xl relative">
              <div className="w-16 h-16 bg-blue-600/20 text-blue-500 flex items-center justify-center rounded-full mx-auto mb-4">
@@ -100,7 +138,7 @@ const AgoraVoiceChat = ({ roomId, userId, inGame }: { roomId: string, userId: st
          </div>
       )}
 
-      {isJoined && (
+      {isJoined && inGame && (
          <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-3 pointer-events-auto">
             <button 
               onClick={toggleMic}
@@ -185,6 +223,8 @@ export default function RoomPage() {
   const roomId = params.roomId as string;
   
   const agoraClient = useRTCClient(AgoraRTC.createClient({ mode: "rtc", codec: "vp8" }));
+  const [isVoiceJoined, setIsVoiceJoined] = useState(false);
+  const [isMicOn, setIsMicOn] = useState(false);
 
   const [userId, setUserId] = useState<string | null>(null);
   const [room, setRoom] = useState<any>(null);
@@ -1075,7 +1115,15 @@ export default function RoomPage() {
         </div>
 
         {userId && (
-           <AgoraVoiceChat roomId={roomId} userId={userId} inGame={room?.status === 'waiting' || room?.status === 'playing' || room?.status === 'intro'} />
+           <AgoraVoiceChat 
+             roomId={roomId} 
+             userId={userId} 
+             isJoined={isVoiceJoined}
+             micOn={isMicOn}
+             setIsJoined={setIsVoiceJoined}
+             setMicOn={setIsMicOn}
+             inGame={room?.status === 'waiting' || room?.status === 'playing' || room?.status === 'intro'} 
+           />
         )}
       </div>
     </div>
