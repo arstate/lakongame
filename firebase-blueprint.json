@@ -1,0 +1,38 @@
+{
+  "entities": {
+    "Player": {
+      "title": "Player",
+      "description": "A player in the game",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "isEliminated": { "type": "boolean" }
+      },
+      "required": ["id", "name", "isEliminated"]
+    },
+    "Room": {
+      "title": "Room",
+      "description": "A game room",
+      "type": "object",
+      "properties": {
+        "roomId": { "type": "string" },
+        "hostId": { "type": "string" },
+        "status": { "type": "string", "enum": ["waiting", "playing", "finished"] },
+        "players": { "type": "array", "items": { "$ref": "#/entities/Player" } },
+        "deck": { "type": "array" },
+        "centerCards": { "type": "array" },
+        "turnOrder": { "type": "array" },
+        "currentTurnIndex": { "type": "number" },
+        "votingState": { "type": ["object", "null"] }
+      },
+      "required": ["roomId", "hostId", "status", "players", "deck", "centerCards", "turnOrder", "currentTurnIndex"]
+    }
+  },
+  "firestore": {
+    "/rooms/{roomId}": {
+      "schema": { "$ref": "#/entities/Room" },
+      "description": "Game rooms"
+    }
+  }
+}
