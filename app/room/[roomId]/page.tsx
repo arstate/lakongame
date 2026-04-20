@@ -7,8 +7,8 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from '@/lib/firebase';
 import { Loader2, Crown, Copy, Check, Play, Users, LogOut } from 'lucide-react';
 
-export const BACK_CARD_URL = "https://github.com/user-attachments/assets/50fa672a-46b2-4761-a979-6449d96f45af";
-export const FRONT_URLS = [
+const BACK_CARD_URL = "https://github.com/user-attachments/assets/50fa672a-46b2-4761-a979-6449d96f45af";
+const FRONT_URLS = [
   "https://github.com/user-attachments/assets/ad5bdf6e-9def-487d-9968-a512fb656ee6",
   "https://github.com/user-attachments/assets/864c8d6a-936f-4aa7-a4e8-07064c8399fd",
   "https://github.com/user-attachments/assets/1169168b-29b0-4ad2-9426-bd761b665d53",
