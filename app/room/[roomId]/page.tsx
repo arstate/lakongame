@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
+import { doc, onSnapshot, updateDoc, collection, query, orderBy, addDoc, serverTimestamp } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from '@/lib/firebase';
-import { Loader2, Crown, Copy, Check, Play, Users, LogOut } from 'lucide-react';
+import { Loader2, Crown, Copy, Check, Play, Users, LogOut, Send, MessageSquare } from 'lucide-react';
 
 const BACK_CARD_URL = "https://github.com/user-attachments/assets/50fa672a-46b2-4761-a979-6449d96f45af";
 const FRONT_URLS = [
@@ -58,6 +58,16 @@ export default function RoomPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+
+  // === CHAT STATE ===
+  const [messages, setMessages] = useState<any[]>([]);
+  const [newMessage, setNewMessage] = useState('');
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Scroll otomatis ke chat terbaru
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
   // 1. Pantau Status Autentikasi Pengguna
   useEffect(() => {
@@ -133,6 +143,19 @@ export default function RoomPage() {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [room, userId, roomId]);
 
+  // 2C. Pantau Data Chat Realtime via onSnapshot
+  useEffect(() => {
+    if (!roomId) return;
+    
+    const q = query(collection(db, 'rooms', roomId, 'messages'), orderBy('createdAt', 'asc'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const msgs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setMessages(msgs);
+    });
+
+    return () => unsubscribe();
+  }, [roomId]);
+
   // Tombol Keluar dari Lobi 
   const handleLeaveRoom = async () => {
     if (!room || !userId) return;
@@ -158,6 +181,27 @@ export default function RoomPage() {
     navigator.clipboard.writeText(roomId);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  // Handle Submit Chat
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newMessage.trim() || !userId || !room) return;
+
+    const myPlayerInfo = room.players.find((p: any) => p.id === userId);
+    const text = newMessage.trim();
+    setNewMessage(''); 
+
+    try {
+      await addDoc(collection(db, 'rooms', roomId, 'messages'), {
+        text,
+        senderId: userId,
+        senderName: myPlayerInfo?.name || 'Pemain Misterius',
+        createdAt: serverTimestamp()
+      });
+    } catch (err) {
+      console.error('Failed to send message:', err);
+    }
   };
 
   // 3. Fungsi Memulai Game Sesuai Tugas 2
@@ -251,7 +295,7 @@ export default function RoomPage() {
         <div className="absolute top-[20%] left-[10%] w-96 h-96 bg-red-800 rounded-full blur-[150px]"></div>
       </div>
 
-      <div className="z-10 w-full max-w-2xl px-6">
+      <div className="z-10 w-full max-w-5xl px-4 md:px-6 py-10 md:py-0 h-screen overflow-y-auto md:h-auto md:overflow-visible flex flex-col justify-start md:justify-center">
         
         {/* LOBBY HEADER */}
         <div className="text-center mb-10">
@@ -278,9 +322,13 @@ export default function RoomPage() {
           </p>
         </div>
 
-        {/* DAFTAR PEMAIN */}
-        <div className="bg-stone-800/50 backdrop-blur-md rounded-2xl border border-stone-700 p-6 md:p-8 shadow-2xl mb-8">
-          <div className="flex items-center justify-between mb-6 border-b border-stone-700 pb-4">
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-6 w-full pb-10 md:pb-0">
+          {/* KOLOM KIRI: DAFTAR PEMAIN & ACTION */}
+          <div className="md:col-span-7 flex flex-col gap-6">
+            
+            {/* DAFTAR PEMAIN */}
+            <div className="bg-stone-800/50 backdrop-blur-md rounded-2xl border border-stone-700 p-6 shadow-2xl">
+              <div className="flex items-center justify-between mb-6 border-b border-stone-700 pb-4">
             <h2 className="text-xs font-bold text-stone-500 tracking-widest uppercase flex items-center gap-2">
               <Users className="w-4 h-4" /> Daftar Pemain
             </h2>
@@ -336,30 +384,83 @@ export default function RoomPage() {
           </div>
         </div>
 
-        {/* HOST ACTION */}
-        <div className="text-center">
-          {isHost ? (
-            <button
-              onClick={startGame}
-              className="w-full sm:w-auto bg-red-600 hover:bg-red-700 text-white font-bold tracking-wider uppercase px-12 py-4 rounded-xl shadow-lg shadow-red-900/20 transition-all flex items-center justify-center gap-3 mx-auto group"
-            >
-              <Play className="w-5 h-5 fill-current" />
-              Mulai Game
-            </button>
-          ) : (
-            <div className="inline-flex items-center gap-2 text-stone-500 text-sm font-medium tracking-wide bg-stone-800 px-6 py-3 rounded-full">
-              <Loader2 className="w-4 h-4 animate-spin text-red-600" />
-              Menunggu Host memulai game...
-            </div>
-          )}
+            {/* HOST ACTION */}
+            <div className="text-center bg-stone-800/30 p-6 rounded-2xl border border-stone-700/50">
+              {isHost ? (
+                <button
+                  onClick={startGame}
+                  className="w-full sm:w-auto bg-red-600 hover:bg-red-700 text-white font-bold tracking-wider uppercase px-12 py-4 rounded-xl shadow-lg shadow-red-900/20 transition-all flex items-center justify-center gap-3 mx-auto group"
+                >
+                  <Play className="w-5 h-5 fill-current" />
+                  Mulai Game
+                </button>
+              ) : (
+                <div className="inline-flex items-center gap-2 text-stone-500 text-sm font-medium tracking-wide bg-stone-900/50 px-6 py-3 rounded-full border border-stone-700">
+                  <Loader2 className="w-4 h-4 animate-spin text-red-600" />
+                  Menunggu Host memulai game...
+                </div>
+              )}
 
-          {/* Tombol Keluar Manual */}
-          <button 
-            onClick={handleLeaveRoom}
-            className="mt-8 flex items-center justify-center gap-2 w-full max-w-[200px] mx-auto text-stone-500 hover:text-red-500 transition-colors text-xs uppercase tracking-widest font-bold"
-          >
-            <LogOut className="w-4 h-4" /> Keluar dari Lobi
-          </button>
+              {/* Tombol Keluar Manual */}
+              <button 
+                onClick={handleLeaveRoom}
+                className="mt-5 flex items-center justify-center gap-2 w-full max-w-[200px] mx-auto text-stone-500 hover:text-red-500 transition-colors text-xs uppercase tracking-widest font-bold"
+              >
+                <LogOut className="w-4 h-4" /> Keluar dari Lobi
+              </button>
+            </div>
+          </div>
+
+          {/* KOLOM KANAN: LIVE CHAT */}
+          <div className="md:col-span-5 flex flex-col h-[500px] bg-stone-800/50 backdrop-blur-md rounded-2xl border border-stone-700 shadow-2xl relative overflow-hidden">
+            <div className="px-5 py-4 border-b border-stone-700/50 flex items-center gap-2 bg-stone-800/80">
+              <MessageSquare className="w-4 h-4 text-stone-400" />
+              <h2 className="text-xs font-bold text-stone-400 tracking-widest uppercase">Live Chat</h2>
+            </div>
+
+            {/* AREA PESAN */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 flex flex-col">
+              {messages.length === 0 ? (
+                <div className="m-auto text-stone-500 text-sm flex flex-col items-center gap-3 text-center">
+                  <MessageSquare className="w-10 h-10 opacity-20" />
+                  <p>Belum ada pesan.<br/>Sapa pemain lain yuk!</p>
+                </div>
+              ) : (
+                messages.map((msg) => {
+                  const isMe = msg.senderId === userId;
+                  return (
+                    <div key={msg.id} className={`flex flex-col max-w-[85%] ${isMe ? 'self-end items-end' : 'self-start items-start'}`}>
+                      <span className="text-[10px] text-stone-500 mb-1 ml-1 font-medium tracking-wide">
+                        {isMe ? 'Kamu' : msg.senderName}
+                      </span>
+                      <div className={`px-4 py-2 rounded-2xl text-sm ${isMe ? 'bg-red-600 text-white rounded-tr-sm' : 'bg-stone-700 text-stone-200 rounded-tl-sm'}`}>
+                        {msg.text}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+
+            {/* INPUT FORM */}
+            <form onSubmit={handleSendMessage} className="p-3 border-t border-stone-700/50 bg-stone-800/80 flex gap-2">
+              <input
+                type="text"
+                value={newMessage}
+                onChange={(e) => setNewMessage(e.target.value)}
+                placeholder="Ketik pesan..."
+                className="flex-1 bg-stone-900 text-sm border border-stone-700 rounded-xl px-4 py-2.5 text-stone-100 placeholder:text-stone-500 focus:outline-none focus:border-red-500/50 transition-colors"
+              />
+              <button 
+                type="submit" 
+                disabled={!newMessage.trim()}
+                className="bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:hover:bg-red-600 text-white px-4 py-2.5 rounded-xl transition-all flex items-center justify-center shrink-0"
+              >
+                <Send className="w-4 h-4" />
+              </button>
+            </form>
+          </div>
         </div>
 
       </div>

@@ -20,6 +20,11 @@ service cloud.firestore {
       allow create: if isSignedIn() && isValidId(roomId);
       allow update: if isSignedIn() && isValidId(roomId);
       allow delete: if isSignedIn();
+
+      // Subcollection untuk chat real-time
+      match /messages/{messageId} {
+        allow read, write: if isSignedIn();
+      }
     }
   }
 }
