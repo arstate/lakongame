@@ -1,0 +1,6 @@
+{
+  "name": "LakonLensa",
+  "description": "Multiplayer web card game using Next.js, Tailwind CSS, and Firebase.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
