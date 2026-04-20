@@ -25,17 +25,29 @@ const AgoraVoiceChat = ({ roomId, userId, inGame }: { roomId: string, userId: st
   const [isJoined, setIsJoined] = useState(false);
   const [micOn, setMicOn] = useState(false);
 
-  // 1. Join logic
+  // Agora numeric UID - stable based on userId
+  const agoraUid = useMemo(() => userId ? parseInt(userId.slice(-8), 16) % 1000000 : null, [userId]);
+
+  // 1. Join logic - stay joined as long as we are in room (waiting/intro/playing)
   useJoin({
     appid: AGORA_APP_ID,
     channel: roomId,
     token: null,
-    uid: userId ? parseInt(userId.slice(-8), 16) % 1000000 : null, // Agora needs numeric UID often, or string if configured, but let's try numeric-ish for safety or just pass string if SDK allows. Actually Agora v4 supports string UIDs.
+    uid: agoraUid,
   }, isJoined && inGame);
 
-  // 2. Local tracks
-  const { localMicrophoneTrack } = useLocalMicrophoneTrack(micOn);
-  usePublish([localMicrophoneTrack], isJoined && inGame && micOn);
+  // 2. Local tracks - always initialize if joined
+  const { localMicrophoneTrack } = useLocalMicrophoneTrack(isJoined && inGame);
+  
+  // Publish once joined
+  usePublish([localMicrophoneTrack], isJoined && inGame);
+
+  // Handle Mute/Unmute properly by enabling/disabling the track
+  useEffect(() => {
+    if (localMicrophoneTrack) {
+      localMicrophoneTrack.setEnabled(micOn).catch(console.error);
+    }
+  }, [micOn, localMicrophoneTrack]);
 
   // 3. Remote tracks
   const remoteUsers = useRemoteUsers();
@@ -43,7 +55,9 @@ const AgoraVoiceChat = ({ roomId, userId, inGame }: { roomId: string, userId: st
 
   useEffect(() => {
     audioTracks.forEach(track => {
-      track.play();
+      if (!track.isPlaying) {
+        track.play();
+      }
     });
   }, [audioTracks]);
 
@@ -52,6 +66,7 @@ const AgoraVoiceChat = ({ roomId, userId, inGame }: { roomId: string, userId: st
     setMicOn(!micOn);
   };
 
+  // Important: Component remains mounted during game transitions as long as either waiting or playing
   if (!inGame) return null;
 
   return (
@@ -67,7 +82,10 @@ const AgoraVoiceChat = ({ roomId, userId, inGame }: { roomId: string, userId: st
                Klik tombol di bawah untuk mengaktifkan suara bersama pemain lain. (Wajib untuk iOS).
              </p>
              <button 
-                onClick={() => { setIsJoined(true); setMicOn(true); }}
+                onClick={() => { 
+                  setIsJoined(true); 
+                  setMicOn(true); 
+                }}
                 className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black py-4 rounded-xl uppercase tracking-widest text-sm transition-all shadow-[0_0_20px_rgba(37,99,235,0.4)] active:scale-95"
              >
                 Aktifkan Voice Chat
@@ -86,8 +104,8 @@ const AgoraVoiceChat = ({ roomId, userId, inGame }: { roomId: string, userId: st
          <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-3 pointer-events-auto">
             <button 
               onClick={toggleMic}
-              className={`p-5 rounded-full shadow-2xl transition-all flex items-center justify-center group relative ${micOn ? 'bg-green-600 hover:bg-green-500 text-white shadow-[0_0_20px_rgba(22,163,74,0.4)]' : 'bg-red-600 hover:bg-red-500 text-white shadow-[0_0_20px_rgba(220,38,38,0.4)]'}`}
-              title={micOn ? "Mute Mic" : "Unmute Mic"}
+              className={`p-5 rounded-full shadow-2xl transition-all flex items-center justify-center group relative border-2 ${micOn ? 'bg-green-600 border-green-400 text-white shadow-[0_0_20px_rgba(22,163,74,0.4)] hover:bg-green-500' : 'bg-stone-800 border-stone-700 text-red-500 shadow-xl hover:bg-stone-700'}`}
+              title={micOn ? "Matikan Mic" : "Nyalakan Mic"}
             >
               {micOn && (
                 <span className="absolute inset-0 rounded-full bg-green-500 animate-ping opacity-25"></span>
