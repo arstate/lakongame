@@ -21,6 +21,54 @@ const shuffleArray = <T,>(array: T[]): T[] => {
   return newArr;
 };
 
+const ShuffleAnimation = () => {
+  return (
+    <div className="relative w-40 h-60 md:w-48 md:h-72 flex justify-center items-center mt-12 mb-8 perspective-[1000px]">
+      <style>{`
+        @keyframes realisticShuffle {
+          0% {
+            transform: translate(0, 0) rotate(var(--base-rot));
+            z-index: 10;
+          }
+          30% {
+            transform: translate(-35px, -85px) rotate(calc(var(--base-rot) - 12deg));
+            z-index: 10;
+          }
+          60% {
+            transform: translate(15px, 0px) rotate(calc(var(--base-rot) + 5deg));
+            z-index: 1;
+          }
+          100% {
+            transform: translate(0, 0) rotate(var(--base-rot));
+            z-index: 10;
+          }
+        }
+        .card-shuffle-anim {
+          animation: realisticShuffle 0.8s infinite ease-in-out;
+        }
+      `}</style>
+      
+      {[0, 1, 2, 3, 4].map((i) => {
+        const baseRotations = ['-2deg', '3deg', '-1deg', '1.5deg', '-0.5deg'];
+        const delays = ['0s', '0.15s', '0.3s', '0.45s', '0.6s'];
+        
+        return (
+          <img
+            key={i}
+            src={BACK_CARD_URL}
+            alt="Card Shuffle"
+            className="absolute w-full h-full object-cover rounded-xl md:rounded-2xl shadow-[0_5px_25px_rgba(0,0,0,0.8)] border-2 border-stone-800 card-shuffle-anim"
+            style={{
+              '--base-rot': baseRotations[i],
+              animationDelay: delays[i]
+            } as React.CSSProperties}
+          />
+        )
+      })}
+    </div>
+  );
+};
+
 export default function RoomPage() {
   const params = useParams();
   const router = useRouter();
@@ -523,17 +571,7 @@ export default function RoomPage() {
 
         {introPhase === 'shuffling_cards' && (
           <motion.div initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} className="flex flex-col items-center gap-8">
-            <div className="flex justify-center items-center relative h-40 w-48 mt-8">
-               {[0,1,2].map(i => (
-                  <motion.div 
-                    key={i} 
-                    style={{ backgroundImage: `url(${BACK_CARD_URL})`, backgroundSize: 'cover' }}
-                    animate={{ rotate: 360, x: [0, (i-1)*30, 0] }} 
-                    transition={{ duration: 1.5, repeat: Infinity, delay: i * 0.1 }} 
-                    className="absolute w-24 h-40 rounded-xl shadow-[0_0_30px_rgba(0,0,0,0.8)] border border-stone-700" 
-                  />
-               ))}
-            </div>
+            <ShuffleAnimation />
             <h2 className="text-2xl md:text-3xl font-black tracking-widest uppercase text-stone-300 mt-4 text-center">Mengacak Kartu...</h2>
           </motion.div>
         )}
@@ -569,30 +607,49 @@ export default function RoomPage() {
   // State: Game Over (Finished)
   if (room && room.status === 'finished') {
      const winner = room.players.find((p: any) => !p.isEliminated);
+     const amIWinner = winner?.id === userId;
+
      return (
        <div className="min-h-screen z-50 bg-stone-950 text-stone-100 flex flex-col items-center justify-center p-6 text-center overflow-hidden relative">
-          <div className="absolute top-[30%] left-[20%] w-[500px] h-[500px] bg-red-900/40 rounded-full blur-[150px] pointer-events-none"></div>
+          <div className={`absolute top-[30%] left-[20%] w-[500px] h-[500px] ${amIWinner ? 'bg-yellow-900/40' : 'bg-red-900/40'} rounded-full blur-[150px] pointer-events-none`}></div>
+          
           <motion.h1 
              initial={{ scale: 0.5, opacity: 0 }}
              animate={{ scale: 1, opacity: 1 }}
              transition={{ type: "spring", bounce: 0.5 }}
-             className="text-6xl md:text-8xl font-black text-red-600 drop-shadow-[0_0_60px_rgba(220,38,38,0.8)] mb-8 tracking-tighter"
+             className={`text-6xl md:text-8xl font-black ${amIWinner ? 'text-yellow-500 drop-shadow-[0_0_60px_rgba(234,179,8,0.8)]' : 'text-red-600 drop-shadow-[0_0_60px_rgba(220,38,38,0.8)]'} mb-8 tracking-tighter`}
           >
-             GAME OVER
+             {amIWinner ? 'SELAMAT!' : 'GAME OVER'}
           </motion.h1>
-          {winner ? (
-             <motion.p initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.5 }} className="text-xl md:text-3xl text-stone-300">
-               Pemenangnya adalah <span className="font-black text-white uppercase tracking-widest">{winner.name}</span>!
-             </motion.p>
-          ) : (
-             <motion.p initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.5 }} className="text-xl md:text-3xl text-stone-300">
-               Semua pemain telah tereliminasi.
-             </motion.p>
-          )}
+
+          <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.5 }} className="flex flex-col items-center gap-4">
+            {amIWinner ? (
+               <>
+                 <div className="text-[6rem] leading-none mb-4 animate-bounce drop-shadow-[0_0_30px_rgba(234,179,8,1)]">🏆</div>
+                 <p className="text-2xl md:text-4xl text-stone-300 font-bold">
+                   Anda adalah <span className="font-black text-yellow-500 uppercase tracking-widest">Pemenangnya!</span>
+                 </p>
+                 <p className="text-stone-400 mt-2">Daya imajinasi Anda tidak tertandingi.</p>
+               </>
+            ) : winner ? (
+               <>
+                 <div className="text-[4rem] leading-none mb-2 drop-shadow-[0_0_30px_rgba(0,0,0,1)] grayscale opacity-50">💀</div>
+                 <p className="text-xl md:text-3xl text-stone-300">
+                   Pemenangnya adalah <span className="font-black text-white uppercase tracking-widest">{winner.name}</span>!
+                 </p>
+                 <p className="text-stone-500 mt-2">Anda tereliminasi. Coba lagi di lain waktu!</p>
+               </>
+            ) : (
+               <p className="text-xl md:text-3xl text-stone-300">
+                 Semua pemain telah tereliminasi.
+               </p>
+            )}
+          </motion.div>
+
           <motion.button 
              initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 1.5 }}
              onClick={() => router.push('/')} 
-             className="mt-16 bg-red-600 hover:bg-red-500 text-white font-bold py-4 px-10 rounded-xl uppercase tracking-widest transition-all shadow-[0_0_30px_rgba(220,38,38,0.4)] z-10"
+             className={`mt-16 ${amIWinner ? 'bg-yellow-600 hover:bg-yellow-500 shadow-[0_0_30px_rgba(234,179,8,0.4)]' : 'bg-red-600 hover:bg-red-500 shadow-[0_0_30px_rgba(220,38,38,0.4)]'} text-white font-bold py-4 px-10 rounded-xl uppercase tracking-widest transition-all z-10`}
           >
              Ke Menu Utama
           </motion.button>
