@@ -34,6 +34,27 @@ export default function Home() {
     signIn();
   }, []);
 
+  // Preload Images
+  useEffect(() => {
+    const allUrls = [BACK_CARD_URL, ...FRONT_URLS];
+    let loadedCount = 0;
+
+    const onImageLoaded = () => {
+      loadedCount++;
+      setPreloadProgress(Math.floor((loadedCount / allUrls.length) * 100));
+      if (loadedCount === allUrls.length) {
+        setTimeout(() => setImagesLoaded(true), 600); // 1-tick delay biar mulus transisi UI
+      }
+    };
+
+    allUrls.forEach((url) => {
+      const img = new Image();
+      img.src = url;
+      img.onload = onImageLoaded;
+      img.onerror = onImageLoaded; // agar skip bila 1 gagal terdownload (fallback aman)
+    });
+  }, []);
+
   if (!imagesLoaded) {
     return (
       <div className="min-h-screen bg-stone-950 flex flex-col items-center justify-center text-stone-100 p-6 z-50 overflow-hidden relative">
@@ -56,27 +77,6 @@ export default function Home() {
     }
     return result;
   };
-
-  // Preload Images
-  useEffect(() => {
-    const allUrls = [BACK_CARD_URL, ...FRONT_URLS];
-    let loadedCount = 0;
-
-    const onImageLoaded = () => {
-      loadedCount++;
-      setPreloadProgress(Math.floor((loadedCount / allUrls.length) * 100));
-      if (loadedCount === allUrls.length) {
-        setTimeout(() => setImagesLoaded(true), 600); // 1-tick delay biar mulus transisi UI
-      }
-    };
-
-    allUrls.forEach((url) => {
-      const img = new Image();
-      img.src = url;
-      img.onload = onImageLoaded;
-      img.onerror = onImageLoaded; // agar skip bila 1 gagal terdownload (fallback aman)
-    });
-  }, []);
 
   const createRoom = async () => {
     if (!playerName.trim()) {
