@@ -48,6 +48,20 @@ export default function RoomPage() {
   const hasDrawn = useRef(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // === ELIMINATION STATE ===
+  const [showDeathAnim, setShowDeathAnim] = useState(false);
+  const prevEliminationState = useRef(false);
+  const myPlayerInfo = room?.players?.find((p: any) => p.id === userId);
+  const amIEliminated = myPlayerInfo?.isEliminated || false;
+
+  useEffect(() => {
+    if (!prevEliminationState.current && amIEliminated) {
+      setShowDeathAnim(true);
+      setTimeout(() => setShowDeathAnim(false), 4000);
+    }
+    prevEliminationState.current = amIEliminated;
+  }, [amIEliminated]);
+
   // Auto-draw Logic
   useEffect(() => {
     // Jalankan auto-draw HANYA jika status bermain, giliran sendiri, belum narik kartu, dan proses voting belum aktif
@@ -531,8 +545,25 @@ export default function RoomPage() {
   // State: Sedang Bermain (Playing)
   if (room && room.status === 'playing') {
     return (
-      <div className="min-h-screen bg-stone-900 text-stone-100 p-6 md:p-12 font-sans overflow-x-hidden overflow-y-auto w-full">
-        <h2 className="text-3xl font-black mb-8 text-center tracking-widest text-red-500 uppercase">Arena Bermain</h2>
+      <div className="min-h-screen bg-stone-900 text-stone-100 p-6 md:p-12 font-sans overflow-x-hidden overflow-y-auto w-full relative">
+        <h2 className="text-3xl font-black mb-4 text-center tracking-widest text-red-500 uppercase">Arena Bermain</h2>
+
+        {/* Daftar Pemain Aktif / Eliminasi */}
+        <div className="flex flex-wrap items-center justify-center gap-3 w-full max-w-4xl mx-auto mb-10">
+           {room.players.map((player: any) => {
+              const isTurn = room.turnOrder[room.currentTurnIndex] === player.id;
+              const isDead = player.isEliminated;
+              return (
+                <div key={player.id} className={`flex items-center gap-2 px-4 py-2 rounded-full border transition-all duration-300 ${isTurn ? 'border-red-500 bg-red-900/30 ring-2 ring-red-500/50' : 'border-stone-700 bg-stone-800'} ${isDead ? 'opacity-40 grayscale border-stone-800' : ''}`}>
+                   <span className="text-sm font-bold flex items-center gap-2">
+                       {isDead ? '💀' : '😁'} 
+                       <span className={isDead ? 'line-through text-stone-500' : 'text-stone-200'}>{player.name} {player.id === userId && '(Kamu)'}</span>
+                   </span>
+                   {isTurn && !isDead && <span className="flex h-2.5 w-2.5 rounded-full bg-red-500 animate-ping"></span>}
+                </div>
+              )
+           })}
+        </div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-6 max-w-6xl mx-auto items-start w-full">
            {/* 1. Gambar Tumpukan Kartu Deck */}
@@ -637,10 +668,10 @@ export default function RoomPage() {
                           </div>
                        ) : (
                           <div className="grid grid-cols-2 gap-4">
-                             <button onClick={() => castVote('no')} className="bg-stone-800 hover:bg-stone-700 text-red-500 border border-red-900/50 font-black py-4 rounded-xl uppercase tracking-widest transition-all">
+                             <button onClick={() => castVote('no')} className="bg-stone-800 hover:bg-stone-700 text-red-500 border border-red-900/50 font-bold py-4 rounded-xl uppercase tracking-widest transition-all">
                                 ❌ Ngga Nyambung
                              </button>
-                             <button onClick={() => castVote('yes')} className="bg-green-600/20 hover:bg-green-600/30 text-green-500 border border-green-500/30 font-black py-4 rounded-xl uppercase tracking-widest transition-all">
+                             <button onClick={() => castVote('yes')} className="bg-green-600/20 hover:bg-green-600/30 text-green-500 border border-green-500/30 font-bold py-4 rounded-xl uppercase tracking-widest transition-all">
                                 ✅ Nyambung
                              </button>
                           </div>
@@ -649,6 +680,24 @@ export default function RoomPage() {
                  </div>
               </motion.div>
            </div>
+        )}
+
+        {/* Animasi Kematian Layar Penuh (Sekali Jalan) */}
+        {showDeathAnim && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-red-950/90 backdrop-blur-sm pointer-events-none">
+             <motion.div initial={{ scale: 0, rotate: -10 }} animate={{ scale: 1, rotate: 0 }} exit={{ scale: 0 }} transition={{ type: 'spring', bounce: 0.6 }} className="text-center flex flex-col items-center">
+                <span className="text-[8rem] leading-none mb-4 drop-shadow-[0_0_50px_rgba(220,38,38,0.8)]">💀</span>
+                <h1 className="text-5xl md:text-7xl font-black text-red-500 drop-shadow-[0_0_40px_rgba(220,38,38,1)] uppercase tracking-tight">Tereliminasi!</h1>
+                <p className="text-stone-300 mt-4 font-bold tracking-widest uppercase bg-stone-900 px-6 py-2 rounded-full border border-red-900/50">Ceritamu Tidak Diterima</p>
+             </motion.div>
+          </div>
+        )}
+
+        {/* Banner Persisten Eliminasi */}
+        {amIEliminated && (
+          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-stone-900 border border-red-900/50 text-red-400 px-6 py-3 rounded-full z-40 shadow-[0_0_30px_rgba(220,38,38,0.4)] text-xs md:text-sm font-bold tracking-widest uppercase whitespace-nowrap opacity-90 backdrop-blur">
+             💀 Kamu Tereliminasi - Tetaplah Memvoting!
+          </div>
         )}
       </div>
     );
