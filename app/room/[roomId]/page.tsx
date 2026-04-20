@@ -9,13 +9,14 @@ import { Loader2, Crown, Copy, Check, Play, Users, LogOut, Send, MessageSquare, 
 import { motion } from 'motion/react';
 import { BACK_CARD_URL, FRONT_URLS, CARD_TITLES } from '@/lib/constants';
 
-const AudioPlayer = ({ stream }: { stream: MediaStream }) => {
+const AudioPlayer = ({ stream, peerId }: { stream: MediaStream, peerId: string }) => {
   const audioRef = useRef<HTMLAudioElement>(null);
   useEffect(() => {
     if (audioRef.current && stream) {
       audioRef.current.srcObject = stream;
+      audioRef.current.play().catch(e => console.error("AutoPlay failed for user", peerId, ":", e));
     }
-  }, [stream]);
+  }, [stream, peerId]);
   return <audio ref={audioRef} autoPlay playsInline className="hidden" />;
 };
 
@@ -29,6 +30,7 @@ const WebRTCVoiceChat = ({ roomId, userId, players, inGame }: { roomId: string, 
   const [isInitialized, setIsInitialized] = useState(false);
 
   const peersRef = useRef<Record<string, RTCPeerConnection>>({});
+  const pendingIceRef = useRef<Record<string, RTCIceCandidateInit[]>>({});
   
   const servers = useMemo(() => ({
     iceServers: [
@@ -44,9 +46,18 @@ const WebRTCVoiceChat = ({ roomId, userId, players, inGame }: { roomId: string, 
       setTimeout(() => {
         setIsPendingPermission(false);
         setIsInitialized(false);
+        if (localStream) {
+           localStream.getTracks().forEach(t => t.stop());
+           setLocalStream(null);
+        }
+        Object.values(peersRef.current).forEach(pc => pc.close());
+        peersRef.current = {};
+        setRemoteStreams({});
+        pendingIceRef.current = {};
+        setMicOn(false);
       }, 0);
     }
-  }, [inGame, isInitialized, errorMsg]);
+  }, [inGame, isInitialized, errorMsg]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const grantPermissionAndStart = async () => {
     try {
@@ -59,18 +70,40 @@ const WebRTCVoiceChat = ({ roomId, userId, players, inGame }: { roomId: string, 
       console.error("Mic permission denied", err);
       setErrorMsg("Izin mic ditolak.");
       setIsPendingPermission(false);
+      setIsInitialized(true);
     }
   };
 
-  useEffect(() => {
-    return () => {
-      if (localStream) localStream.getTracks().forEach(t => t.stop());
-      Object.values(peersRef.current).forEach((pc: RTCPeerConnection) => pc.close());
-    }
-  }, [localStream]);
+  const startListenOnly = () => {
+     setLocalStream(null);
+     setIsPendingPermission(false);
+     setIsInitialized(true);
+  };
 
+  const setupTracks = (pc: RTCPeerConnection) => {
+     if (localStream) {
+        localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+     } else {
+        pc.addTransceiver('audio', { direction: 'recvonly' });
+     }
+  };
+
+  const processPendingIce = async (fromId: string, pc: RTCPeerConnection) => {
+     if (pendingIceRef.current[fromId]) {
+        for (const ice of pendingIceRef.current[fromId]) {
+           try {
+              await pc.addIceCandidate(new RTCIceCandidate(ice));
+           } catch (e) {
+              console.warn("Failed to add pending ice", e);
+           }
+        }
+        pendingIceRef.current[fromId] = [];
+     }
+  };
+
+  // Listen to incoming Offers, Answers and ICE Candidates
   useEffect(() => {
-    if (!localStream || !inGame || !userId) return;
+    if (!isInitialized || !inGame || !userId) return;
     
     const signalingRef = collection(db, 'rooms', roomId, 'callSignaling');
     const q = query(signalingRef, where('to', '==', userId));
@@ -83,40 +116,41 @@ const WebRTCVoiceChat = ({ roomId, userId, players, inGame }: { roomId: string, 
           
           try {
             if (data.type === 'offer') {
-              const pc = new RTCPeerConnection(servers);
-              peersRef.current[fromId] = pc;
-              
-              localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
-              
-              pc.onicecandidate = (event) => {
-                if (event.candidate) {
-                  addDoc(signalingRef, {
-                    from: userId, to: fromId, type: 'ice', payload: event.candidate.toJSON(), createdAt: serverTimestamp()
-                  });
-                }
-              };
-              
-              pc.ontrack = (event) => {
-                setRemoteStreams(prev => ({ ...prev, [fromId]: event.streams[0] }));
-              };
-              
-              await pc.setRemoteDescription(new RTCSessionDescription(data.payload));
-              const answer = await pc.createAnswer();
-              await pc.setLocalDescription(answer);
-              
-              await addDoc(signalingRef, {
-                from: userId, to: fromId, type: 'answer', payload: { type: answer.type, sdp: answer.sdp }, createdAt: serverTimestamp()
-              });
-              
+              if (!peersRef.current[fromId]) {
+                 const pc = new RTCPeerConnection(servers);
+                 peersRef.current[fromId] = pc;
+                 setupTracks(pc);
+                 
+                 pc.onicecandidate = (event) => {
+                   if (event.candidate) {
+                     addDoc(signalingRef, { from: userId, to: fromId, type: 'ice', payload: event.candidate.toJSON(), createdAt: serverTimestamp() });
+                   }
+                 };
+                 
+                 pc.ontrack = (event) => {
+                   setRemoteStreams(prev => ({ ...prev, [fromId]: event.streams[0] }));
+                 };
+                 
+                 await pc.setRemoteDescription(new RTCSessionDescription(data.payload));
+                 const answer = await pc.createAnswer();
+                 await pc.setLocalDescription(answer);
+                 
+                 await addDoc(signalingRef, { from: userId, to: fromId, type: 'answer', payload: { type: answer.type, sdp: answer.sdp }, createdAt: serverTimestamp() });
+                 await processPendingIce(fromId, pc);
+              }
             } else if (data.type === 'answer') {
               const pc = peersRef.current[fromId];
               if (pc && pc.signalingState !== 'stable') {
-                await pc.setRemoteDescription(new RTCSessionDescription(data.payload));
+                 await pc.setRemoteDescription(new RTCSessionDescription(data.payload));
+                 await processPendingIce(fromId, pc);
               }
             } else if (data.type === 'ice') {
               const pc = peersRef.current[fromId];
               if (pc && pc.remoteDescription) {
-                await pc.addIceCandidate(new RTCIceCandidate(data.payload));
+                 await pc.addIceCandidate(new RTCIceCandidate(data.payload)).catch(e => console.warn(e));
+              } else {
+                 if (!pendingIceRef.current[fromId]) pendingIceRef.current[fromId] = [];
+                 pendingIceRef.current[fromId].push(data.payload);
               }
             }
           } catch (e) {
@@ -129,10 +163,11 @@ const WebRTCVoiceChat = ({ roomId, userId, players, inGame }: { roomId: string, 
     });
     
     return () => unsubscribe();
-  }, [localStream, inGame, roomId, userId]);
+  }, [isInitialized, inGame, roomId, userId, localStream, servers]);
 
+  // Send offers to new players
   useEffect(() => {
-    if (!localStream || !inGame) return;
+    if (!isInitialized || !inGame || !userId) return;
     
     const signalingRef = collection(db, 'rooms', roomId, 'callSignaling');
     
@@ -141,14 +176,11 @@ const WebRTCVoiceChat = ({ roomId, userId, players, inGame }: { roomId: string, 
       if (peerId !== userId && userId > peerId && !peersRef.current[peerId]) {
         const pc = new RTCPeerConnection(servers);
         peersRef.current[peerId] = pc;
-        
-        localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+        setupTracks(pc);
         
         pc.onicecandidate = (event) => {
           if (event.candidate) {
-            addDoc(signalingRef, {
-              from: userId, to: peerId, type: 'ice', payload: event.candidate.toJSON(), createdAt: serverTimestamp()
-            });
+            addDoc(signalingRef, { from: userId, to: peerId, type: 'ice', payload: event.candidate.toJSON(), createdAt: serverTimestamp() });
           }
         };
         
@@ -159,12 +191,11 @@ const WebRTCVoiceChat = ({ roomId, userId, players, inGame }: { roomId: string, 
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
         
-        await addDoc(signalingRef, {
-          from: userId, to: peerId, type: 'offer', payload: { type: offer.type, sdp: offer.sdp }, createdAt: serverTimestamp()
-        });
+        await addDoc(signalingRef, { from: userId, to: peerId, type: 'offer', payload: { type: offer.type, sdp: offer.sdp }, createdAt: serverTimestamp() });
       }
     });
-  }, [players, localStream, inGame, roomId, userId]);
+  }, [players, isInitialized, inGame, roomId, userId, localStream, servers]);
+
   
   useEffect(() => {
     return () => {
@@ -203,7 +234,7 @@ const WebRTCVoiceChat = ({ roomId, userId, players, inGame }: { roomId: string, 
                 Berikan Izin & Mulai
              </button>
              <button 
-                onClick={() => { setIsPendingPermission(false); setIsInitialized(true); }}
+                onClick={startListenOnly}
                 className="w-full bg-transparent hover:bg-stone-700 text-stone-400 font-bold py-3 mt-2 rounded-xl uppercase tracking-widest text-xs transition-colors"
              >
                 Abaikan (Pemain Bisu)
@@ -214,7 +245,7 @@ const WebRTCVoiceChat = ({ roomId, userId, players, inGame }: { roomId: string, 
 
       <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-3 pointer-events-none">
          {Object.entries(remoteStreams).map(([peerId, stream]) => (
-           <AudioPlayer key={peerId} stream={stream} />
+           <AudioPlayer key={peerId} peerId={peerId} stream={stream} />
          ))}
          {errorMsg && (
            <div className="bg-red-900/90 text-white text-xs px-4 py-2 rounded-lg border border-red-500 shadow-xl pointer-events-auto">
