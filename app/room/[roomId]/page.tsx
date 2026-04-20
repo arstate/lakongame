@@ -1,52 +1,237 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { doc, onSnapshot, updateDoc, collection, query, orderBy, addDoc, serverTimestamp, deleteDoc } from 'firebase/firestore';
+import { doc, onSnapshot, updateDoc, collection, query, orderBy, addDoc, serverTimestamp, deleteDoc, where } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from '@/lib/firebase';
 import { Loader2, Crown, Copy, Check, Play, Users, LogOut, Send, MessageSquare, Mic, MicOff } from 'lucide-react';
 import { motion } from 'motion/react';
 import { BACK_CARD_URL, FRONT_URLS, CARD_TITLES } from '@/lib/constants';
-import AgoraRTC, { AgoraRTCProvider, useRTCClient, useLocalMicrophoneTrack, usePublish, useJoin, useRemoteAudioTracks, useRemoteUsers } from "agora-rtc-react";
 
-const APP_ID = "565e38e7aa3c4d71845a1f0205279df1"; // ISI_AGORA_APP_ID_DISINI
+const AudioPlayer = ({ stream }: { stream: MediaStream }) => {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  useEffect(() => {
+    if (audioRef.current && stream) {
+      audioRef.current.srcObject = stream;
+    }
+  }, [stream]);
+  return <audio ref={audioRef} autoPlay playsInline className="hidden" />;
+};
 
-const AgoraVoiceChatInner = ({ roomId, inGame }: { roomId: string, inGame: boolean }) => {
+const WebRTCVoiceChat = ({ roomId, userId, players, inGame }: { roomId: string, userId: string, players: any[], inGame: boolean }) => {
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
   const [micOn, setMicOn] = useState(false);
-  const { localMicrophoneTrack } = useLocalMicrophoneTrack(micOn);
+  const [errorMsg, setErrorMsg] = useState("");
   
-  useJoin({ appid: APP_ID, channel: roomId, token: null }, inGame);
-  usePublish([localMicrophoneTrack]);
+  const [isPendingPermission, setIsPendingPermission] = useState(false);
+  const [isInitialized, setIsInitialized] = useState(false);
+
+  const peersRef = useRef<Record<string, RTCPeerConnection>>({});
   
-  const remoteUsers = useRemoteUsers();
-  const { audioTracks } = useRemoteAudioTracks(remoteUsers);
+  const servers = useMemo(() => ({
+    iceServers: [
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' }
+    ]
+  }), []);
+
+  useEffect(() => {
+    if (inGame && !isInitialized && !errorMsg) {
+      setTimeout(() => setIsPendingPermission(true), 0);
+    } else if (!inGame) {
+      setTimeout(() => {
+        setIsPendingPermission(false);
+        setIsInitialized(false);
+      }, 0);
+    }
+  }, [inGame, isInitialized, errorMsg]);
+
+  const grantPermissionAndStart = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getAudioTracks().forEach(t => t.enabled = false); 
+      setLocalStream(stream);
+      setIsPendingPermission(false);
+      setIsInitialized(true);
+    } catch (err) {
+      console.error("Mic permission denied", err);
+      setErrorMsg("Izin mic ditolak.");
+      setIsPendingPermission(false);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (localStream) localStream.getTracks().forEach(t => t.stop());
+      Object.values(peersRef.current).forEach((pc: RTCPeerConnection) => pc.close());
+    }
+  }, [localStream]);
+
+  useEffect(() => {
+    if (!localStream || !inGame || !userId) return;
+    
+    const signalingRef = collection(db, 'rooms', roomId, 'callSignaling');
+    const q = query(signalingRef, where('to', '==', userId));
+    
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      snapshot.docChanges().forEach(async (change) => {
+        if (change.type === 'added') {
+          const data = change.doc.data();
+          const fromId = data.from;
+          
+          try {
+            if (data.type === 'offer') {
+              const pc = new RTCPeerConnection(servers);
+              peersRef.current[fromId] = pc;
+              
+              localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+              
+              pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                  addDoc(signalingRef, {
+                    from: userId, to: fromId, type: 'ice', payload: event.candidate.toJSON(), createdAt: serverTimestamp()
+                  });
+                }
+              };
+              
+              pc.ontrack = (event) => {
+                setRemoteStreams(prev => ({ ...prev, [fromId]: event.streams[0] }));
+              };
+              
+              await pc.setRemoteDescription(new RTCSessionDescription(data.payload));
+              const answer = await pc.createAnswer();
+              await pc.setLocalDescription(answer);
+              
+              await addDoc(signalingRef, {
+                from: userId, to: fromId, type: 'answer', payload: { type: answer.type, sdp: answer.sdp }, createdAt: serverTimestamp()
+              });
+              
+            } else if (data.type === 'answer') {
+              const pc = peersRef.current[fromId];
+              if (pc && pc.signalingState !== 'stable') {
+                await pc.setRemoteDescription(new RTCSessionDescription(data.payload));
+              }
+            } else if (data.type === 'ice') {
+              const pc = peersRef.current[fromId];
+              if (pc && pc.remoteDescription) {
+                await pc.addIceCandidate(new RTCIceCandidate(data.payload));
+              }
+            }
+          } catch (e) {
+            console.error("WebRTC Signaling Error:", e);
+          }
+
+          deleteDoc(change.doc.ref).catch(() => {});
+        }
+      });
+    });
+    
+    return () => unsubscribe();
+  }, [localStream, inGame, roomId, userId]);
+
+  useEffect(() => {
+    if (!localStream || !inGame) return;
+    
+    const signalingRef = collection(db, 'rooms', roomId, 'callSignaling');
+    
+    players.forEach(async (p: any) => {
+      const peerId = p.id;
+      if (peerId !== userId && userId > peerId && !peersRef.current[peerId]) {
+        const pc = new RTCPeerConnection(servers);
+        peersRef.current[peerId] = pc;
+        
+        localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+        
+        pc.onicecandidate = (event) => {
+          if (event.candidate) {
+            addDoc(signalingRef, {
+              from: userId, to: peerId, type: 'ice', payload: event.candidate.toJSON(), createdAt: serverTimestamp()
+            });
+          }
+        };
+        
+        pc.ontrack = (event) => {
+          setRemoteStreams(prev => ({ ...prev, [peerId]: event.streams[0] }));
+        };
+        
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        
+        await addDoc(signalingRef, {
+          from: userId, to: peerId, type: 'offer', payload: { type: offer.type, sdp: offer.sdp }, createdAt: serverTimestamp()
+        });
+      }
+    });
+  }, [players, localStream, inGame, roomId, userId]);
   
   useEffect(() => {
-    audioTracks.forEach(track => track.play());
-  }, [audioTracks]);
+    return () => {
+      Object.values(peersRef.current).forEach(pc => pc.close());
+      peersRef.current = {};
+      setRemoteStreams({});
+    };
+  }, [inGame]);
+
+  const toggleMic = () => {
+    if (localStream) {
+      const enabled = !micOn;
+      localStream.getAudioTracks().forEach(t => t.enabled = enabled);
+      setMicOn(enabled);
+    }
+  };
 
   if (!inGame) return null;
 
   return (
-    <div className="fixed bottom-6 right-6 z-50">
-      <button 
-        onClick={() => setMicOn(!micOn)}
-        className={`p-4 rounded-full shadow-2xl transition-all flex items-center justify-center ${micOn ? 'bg-green-500 hover:bg-green-600 animate-pulse shadow-[0_0_20px_rgba(34,197,94,0.6)] text-white' : 'bg-stone-800 hover:bg-stone-700 text-red-500 border border-stone-700'}`}
-        title={micOn ? "Matikan Mic" : "Nyalakan Mic"}
-      >
-        {micOn ? <Mic className="w-6 h-6" /> : <MicOff className="w-6 h-6" />}
-      </button>
-    </div>
-  );
-};
+    <>
+      {isPendingPermission && (
+         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-stone-900/80 backdrop-blur-sm p-4">
+           <div className="bg-stone-800 border border-stone-700 rounded-2xl p-6 md:p-8 max-w-sm w-full text-center shadow-2xl relative">
+             <div className="w-16 h-16 bg-red-600/20 text-red-500 flex items-center justify-center rounded-full mx-auto mb-4">
+                <Mic className="w-8 h-8" />
+             </div>
+             <h3 className="text-xl font-bold text-white mb-2">Izin Mikrofon</h3>
+             <p className="text-sm text-stone-400 mb-6">
+               Game ini menggunakan fitur Voice Chat P2P Real-time antar pemain. Izinkan mikrofon untuk berkomunikasi!
+             </p>
+             <button 
+                onClick={grantPermissionAndStart}
+                className="w-full bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-xl uppercase tracking-widest text-xs transition-colors"
+             >
+                Berikan Izin & Mulai
+             </button>
+             <button 
+                onClick={() => { setIsPendingPermission(false); setIsInitialized(true); }}
+                className="w-full bg-transparent hover:bg-stone-700 text-stone-400 font-bold py-3 mt-2 rounded-xl uppercase tracking-widest text-xs transition-colors"
+             >
+                Abaikan (Pemain Bisu)
+             </button>
+           </div>
+         </div>
+      )}
 
-const AgoraVoiceChat = ({ roomId, inGame }: { roomId: string, inGame: boolean }) => {
-  const agoraClient = useRTCClient(AgoraRTC.createClient({ codec: "vp8", mode: "rtc" }));
-  return (
-    <AgoraRTCProvider client={agoraClient}>
-      <AgoraVoiceChatInner roomId={roomId} inGame={inGame} />
-    </AgoraRTCProvider>
+      <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-3 pointer-events-none">
+         {Object.entries(remoteStreams).map(([peerId, stream]) => (
+           <AudioPlayer key={peerId} stream={stream} />
+         ))}
+         {errorMsg && (
+           <div className="bg-red-900/90 text-white text-xs px-4 py-2 rounded-lg border border-red-500 shadow-xl pointer-events-auto">
+             {errorMsg}
+           </div>
+         )}
+         {isInitialized && !errorMsg && (
+            <button 
+              onClick={toggleMic}
+              className={`p-4 rounded-full shadow-2xl transition-all flex items-center justify-center pointer-events-auto ${micOn ? 'bg-green-500 hover:bg-green-600 animate-pulse shadow-[0_0_20px_rgba(34,197,94,0.6)] text-white' : 'bg-stone-800 hover:bg-stone-700 text-red-500 border border-stone-700'}`}
+              title={micOn ? "Matikan Mic" : "Nyalakan Mic"}
+            >
+              {micOn ? <Mic className="w-6 h-6" /> : <MicOff className="w-6 h-6" />}
+            </button>
+         )}
+      </div>
+    </>
   );
 };
 
@@ -1003,6 +1188,9 @@ export default function RoomPage() {
           </div>
         </div>
 
+        {userId && (
+           <WebRTCVoiceChat roomId={roomId} userId={userId} players={room.players} inGame={room?.status === 'waiting' || room?.status === 'playing' || room?.status === 'intro'} />
+        )}
       </div>
     </div>
   );
