@@ -989,13 +989,27 @@ export default function RoomPage() {
              💀 Kamu Tereliminasi - Tetaplah Memvoting!
           </div>
         )}
+
+        {/* Voice Chat Component - Persistent across inGame status changes */}
+        {userId && (
+           <AgoraVoiceChat 
+             roomId={roomId} 
+             userId={userId} 
+             isJoined={isVoiceJoined}
+             micOn={isMicOn}
+             setIsJoined={setIsVoiceJoined}
+             setMicOn={setIsMicOn}
+             inGame={true} 
+           />
+        )}
       </div>
     );
   }
 
+
   // State: Layar LOBBY (Status: waiting)
-  const isHost = room.hostId === userId;
-  const playerCount = room.players.length;
+  const isHost = room?.hostId === userId;
+  const playerCount = room?.players?.length || 0;
 
   return (
     <AgoraRTCProvider client={agoraClient}>
@@ -1122,7 +1136,7 @@ export default function RoomPage() {
              micOn={isMicOn}
              setIsJoined={setIsVoiceJoined}
              setMicOn={setIsMicOn}
-             inGame={room?.status === 'waiting' || room?.status === 'playing' || room?.status === 'intro'} 
+             inGame={true} 
            />
         )}
       </div>
