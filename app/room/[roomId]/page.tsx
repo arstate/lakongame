@@ -5,9 +5,51 @@ import { useParams, useRouter } from 'next/navigation';
 import { doc, onSnapshot, updateDoc, collection, query, orderBy, addDoc, serverTimestamp, deleteDoc } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from '@/lib/firebase';
-import { Loader2, Crown, Copy, Check, Play, Users, LogOut, Send, MessageSquare } from 'lucide-react';
+import { Loader2, Crown, Copy, Check, Play, Users, LogOut, Send, MessageSquare, Mic, MicOff } from 'lucide-react';
 import { motion } from 'motion/react';
 import { BACK_CARD_URL, FRONT_URLS, CARD_TITLES } from '@/lib/constants';
+import AgoraRTC, { AgoraRTCProvider, useRTCClient, useLocalMicrophoneTrack, usePublish, useJoin, useRemoteAudioTracks, useRemoteUsers } from "agora-rtc-react";
+
+const APP_ID = "565e38e7aa3c4d71845a1f0205279df1"; // ISI_AGORA_APP_ID_DISINI
+
+const AgoraVoiceChatInner = ({ roomId, inGame }: { roomId: string, inGame: boolean }) => {
+  const [micOn, setMicOn] = useState(false);
+  const { localMicrophoneTrack } = useLocalMicrophoneTrack(micOn);
+  
+  useJoin({ appid: APP_ID, channel: roomId, token: null }, inGame);
+  usePublish([localMicrophoneTrack]);
+  
+  const remoteUsers = useRemoteUsers();
+  const { audioTracks } = useRemoteAudioTracks(remoteUsers);
+  
+  useEffect(() => {
+    audioTracks.forEach(track => track.play());
+  }, [audioTracks]);
+
+  if (!inGame) return null;
+
+  return (
+    <div className="fixed bottom-6 right-6 z-50">
+      <button 
+        onClick={() => setMicOn(!micOn)}
+        className={`p-4 rounded-full shadow-2xl transition-all flex items-center justify-center ${micOn ? 'bg-green-500 hover:bg-green-600 animate-pulse shadow-[0_0_20px_rgba(34,197,94,0.6)] text-white' : 'bg-stone-800 hover:bg-stone-700 text-red-500 border border-stone-700'}`}
+        title={micOn ? "Matikan Mic" : "Nyalakan Mic"}
+      >
+        {micOn ? <Mic className="w-6 h-6" /> : <MicOff className="w-6 h-6" />}
+      </button>
+    </div>
+  );
+};
+
+const AgoraVoiceChat = ({ roomId, inGame }: { roomId: string, inGame: boolean }) => {
+  const agoraClient = useRTCClient(AgoraRTC.createClient({ codec: "vp8", mode: "rtc" }));
+  return (
+    <AgoraRTCProvider client={agoraClient}>
+      <AgoraVoiceChatInner roomId={roomId} inGame={inGame} />
+    </AgoraRTCProvider>
+  );
+};
+
 
 type IntroPhase = 'idle' | 'shuffling_players' | 'showing_players' | 'shuffling_cards' | 'countdown_3' | 'countdown_2' | 'countdown_1' | 'countdown_go';
 
@@ -90,8 +132,9 @@ export default function RoomPage() {
   const [localTurnOrder, setLocalTurnOrder] = useState<any[]>([]);
 
   // === PLAYING STATE ===
-  const isMyTurn = room?.status === 'playing' && room?.turnOrder?.[room.currentTurnIndex] === userId;
-  const [activeDrawnCard, setActiveDrawnCard] = useState<any>(null);
+  const currentTurnPlayerId = room?.turnOrder?.[room.currentTurnIndex];
+  const isMyTurn = room?.status === 'playing' && currentTurnPlayerId === userId;
+  const activeDrawnCard = room?.activeCard || null;
   const [storyInput, setStoryInput] = useState('');
   const hasDrawn = useRef(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -118,11 +161,13 @@ export default function RoomPage() {
       const currentDeck = [...(room?.deck || [])];
       if (currentDeck.length > 0) {
         const drawn = currentDeck.pop();
-        setActiveDrawnCard(drawn); // Simpan di local state
         
-        // Buang dari database deck
+        // Simpan langsung di firebase agar semua player ter-update UI-nya
         const roomRef = doc(db, 'rooms', roomId);
-        updateDoc(roomRef, { deck: currentDeck }).catch(console.error);
+        updateDoc(roomRef, { 
+           activeCard: drawn,
+           deck: currentDeck 
+        }).catch(console.error);
       }
     }
     // Jika bukan giliran, pastikan reset flag
@@ -179,7 +224,8 @@ export default function RoomPage() {
           centerCards: newCenterCards,
           currentTurnIndex: nextTurnIndex,
           status: newStatus,
-          votingState: null
+          votingState: null,
+          activeCard: null
        }).catch(console.error);
     }
   }, [room?.votingState, room?.status, room?.players, room?.hostId, room?.currentTurnIndex, room?.turnOrder, room?.centerCards, userId, roomId]);
@@ -282,14 +328,20 @@ export default function RoomPage() {
   // === INTRO SEQUENCE LOGIC ===
   useEffect(() => {
     if (room?.status === 'intro' && introPhase === 'idle') {
-       setIntroPhase('shuffling_players');
-       setLocalTurnOrder(shuffleArray([...room.players]));
+       const timer = setTimeout(() => {
+         setIntroPhase('shuffling_players');
+         setLocalTurnOrder(shuffleArray([...room.players]));
+       }, 0);
+       return () => clearTimeout(timer);
     }
   }, [room?.status, introPhase, room?.players]);
 
   useEffect(() => {
     if (room?.status !== 'intro') {
-        if (introPhase !== 'idle') setIntroPhase('idle');
+        if (introPhase !== 'idle') {
+           const timer = setTimeout(() => setIntroPhase('idle'), 0);
+           return () => clearTimeout(timer);
+        }
         return;
     }
 
@@ -317,12 +369,41 @@ export default function RoomPage() {
         break;
       case 'countdown_go':
          if (isHost) {
-             timer = setTimeout(() => finalizeGameSetup(localTurnOrder), 1000);
+             timer = setTimeout(() => {
+                const gameCards = Array.from({ length: 21 }).map((_, i) => ({
+                  id: i + 1,
+                  text: CARD_TITLES[i],
+                  imageUrl: FRONT_URLS[i % FRONT_URLS.length]
+                }));
+          
+                const shuffledCards = shuffleArray(gameCards);
+                
+                const centerCard = shuffledCards.pop(); 
+                const startCenterPayload = {
+                  card: [centerCard],
+                  story: "KARTU PEMBUKA - Mari mulai ceritanya!",
+                  playerId: "system",
+                  playerName: "Sistem"
+                };
+          
+                const turnOrderIds = localTurnOrder.map((p: any) => p.id);
+          
+                const roomRef = doc(db, 'rooms', roomId);
+                updateDoc(roomRef, {
+                  status: 'playing',
+                  deck: shuffledCards,
+                  centerCards: [startCenterPayload],
+                  turnOrder: turnOrderIds,
+                  currentTurnIndex: 0,
+                  votingState: null,
+                  activeCard: null
+                }).catch(console.error);
+             }, 1000);
          }
         break;
     }
     return () => clearTimeout(timer);
-  }, [introPhase, room?.status, userId, roomId, localTurnOrder]);
+  }, [introPhase, room?.status, userId, roomId, localTurnOrder, room?.hostId]);
 
   // Tombol Keluar dari Lobi 
   const handleLeaveRoom = async () => {
@@ -390,43 +471,6 @@ export default function RoomPage() {
     }
   };
 
-  const finalizeGameSetup = async (finalTurnOrder: any[]) => {
-    if (!room || room.hostId !== userId) return;
-
-    try {
-      const gameCards = Array.from({ length: 21 }).map((_, i) => ({
-        id: i + 1,
-        text: CARD_TITLES[i],
-        imageUrl: FRONT_URLS[i % FRONT_URLS.length]
-      }));
-
-      const shuffledCards = shuffleArray(gameCards);
-      
-      const centerCard = shuffledCards.pop(); 
-      const startCenterPayload = {
-        card: [centerCard],
-        story: "KARTU PEMBUKA - Mari mulai ceritanya!",
-        playerId: "system",
-        playerName: "Sistem"
-      };
-
-      const turnOrderIds = finalTurnOrder.map((p: any) => p.id);
-
-      const roomRef = doc(db, 'rooms', roomId);
-      await updateDoc(roomRef, {
-        status: 'playing',
-        deck: shuffledCards,
-        centerCards: [startCenterPayload],
-        turnOrder: turnOrderIds,
-        currentTurnIndex: 0,
-        votingState: null
-      });
-    } catch (err) {
-      console.error("Gagal setup game:", err);
-      setError("Terjadi kesalahan saat mesin memproses permainan.");
-    }
-  };
-
   const submitStory = async () => {
     if (!storyInput.trim() || !activeDrawnCard || !room) return;
     const myPlayer = room.players.find((p: any) => p.id === userId);
@@ -442,10 +486,10 @@ export default function RoomPage() {
              card: activeDrawnCard,
              story: storyInput.trim(),
              votes: {}
-          }
+          },
+          activeCard: null
        });
        // Selesai submit, bersihkan state lokal
-       setActiveDrawnCard(null);
        setStoryInput('');
     } catch(err) {
        console.error("Gagal submit cerita:", err);
@@ -719,8 +763,8 @@ export default function RoomPage() {
                     </motion.div>
                  ))}
 
-                 {/* Grid Tambahan Khusus User Yang Sedang Gilirannya (Jika dia memegang local activeDrawnCard) */}
-                 {activeDrawnCard && isMyTurn && !room.votingState?.active && (
+                 {/* Grid Tambahan Khusus Kartu yang Sedang Aktif di Tangan */}
+                 {activeDrawnCard && !room.votingState?.active && (
                     <motion.div 
                        initial={{ scale: 0.8, opacity: 0, y: 50 }}
                        animate={{ scale: 1, opacity: 1, y: 0 }}
@@ -729,27 +773,36 @@ export default function RoomPage() {
                        <img 
                           src={activeDrawnCard.imageUrl}
                           alt="Kartu Di Tangan"
-                          className="w-[80%] md:w-full aspect-[2/3] object-cover rounded-xl shadow-[0_0_40px_rgba(220,38,38,0.4)] border-2 border-red-500"
+                          className="w-[80%] md:w-full aspect-[2/3] object-cover rounded-xl shadow-[0_0_40px_rgba(220,38,38,0.4)] border-2 border-red-500 relative"
                        />
-                       <div className="w-full flex-col flex gap-2">
-                          <label className="text-[10px] text-stone-400 font-bold uppercase tracking-widest text-center mt-2">
-                             Cerita harus nyambung dari awal mula kartu!
-                          </label>
-                          <textarea 
-                             value={storyInput}
-                             onChange={e => setStoryInput(e.target.value)}
-                             className="w-full bg-stone-950 border border-red-900/50 rounded-xl p-3 text-sm focus:outline-none focus:border-red-500 text-stone-100 resize-none shadow-inner"
-                             rows={4}
-                             placeholder="Ketik kelanjutan cerita di sini..."
-                          />
-                          <button 
-                             onClick={submitStory}
-                             disabled={!storyInput.trim() || isSubmitting}
-                             className="w-full bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-xl uppercase tracking-widest text-xs disabled:opacity-50 transition-colors shadow-lg"
-                          >
-                             {isSubmitting ? 'Mengirim...' : 'Submit Cerita'}
-                          </button>
-                       </div>
+                       {isMyTurn ? (
+                         <div className="w-full flex-col flex gap-2">
+                            <label className="text-[10px] text-stone-400 font-bold uppercase tracking-widest text-center mt-2">
+                               Cerita harus nyambung dari awal mula kartu!
+                            </label>
+                            <textarea 
+                               value={storyInput}
+                               onChange={e => setStoryInput(e.target.value)}
+                               className="w-full bg-stone-950 border border-red-900/50 rounded-xl p-3 text-sm focus:outline-none focus:border-red-500 text-stone-100 resize-none shadow-inner"
+                               rows={4}
+                               placeholder="Ketik kelanjutan cerita di sini..."
+                            />
+                            <button 
+                               onClick={submitStory}
+                               disabled={!storyInput.trim() || isSubmitting}
+                               className="w-full bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-xl uppercase tracking-widest text-xs disabled:opacity-50 transition-colors shadow-lg"
+                            >
+                               {isSubmitting ? 'Mengirim...' : 'Submit Cerita'}
+                            </button>
+                         </div>
+                       ) : (
+                         <div className="w-full bg-stone-800/80 border border-stone-700/50 rounded-xl p-4 text-center mt-4 flex items-center justify-center gap-2">
+                            <Loader2 className="w-4 h-4 text-red-500 animate-spin" />
+                            <span className="text-xs text-stone-400 font-bold tracking-widest uppercase">
+                               Menunggu pemain bercerita...
+                            </span>
+                         </div>
+                       )}
                     </motion.div>
                  )}
               </div>
@@ -914,19 +967,6 @@ export default function RoomPage() {
                 </div>
               );
             })}
-
-            {/* Empty Slots */}
-            {Array.from({ length: Math.max(0, 6 - playerCount) }).map((_, i) => (
-              <div 
-                key={`empty-${i}`} 
-                className="flex items-center justify-between p-4 rounded-xl border border-stone-800 border-dashed opacity-50 bg-stone-900/10"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-full border-2 border-stone-800 border-dashed" />
-                  <span className="text-stone-600 text-sm italic">Menunggu pemain...</span>
-                </div>
-              </div>
-            ))}
           </div>
         </div>
 
