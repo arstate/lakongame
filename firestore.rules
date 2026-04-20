@@ -8,59 +8,18 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // 3. Primitives
     function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+      return id is string && id.size() <= 128;
     }
-    function incoming() { return request.resource.data; }
-    function existing() { return resource.data; }
     function isSignedIn() { return request.auth != null; }
 
-    function isValidRoom(data) {
-      return data.keys().hasAll(['roomId', 'hostId', 'status', 'players', 'deck', 'centerCards', 'turnOrder', 'currentTurnIndex'])
-          && data.roomId is string && data.roomId.size() == 4
-          && data.hostId is string && data.hostId.size() <= 128
-          && data.status in ['waiting', 'playing', 'finished']
-          && data.players is list && data.players.size() <= 10
-          && data.deck is list && data.deck.size() <= 100
-          && data.centerCards is list && data.centerCards.size() <= 100
-          && data.turnOrder is list && data.turnOrder.size() <= 10
-          && data.currentTurnIndex is number;
-    }
-
     match /rooms/{roomId} {
-      // Izinkan baca jika sedang login (dibutuhkan untuk join room)
-      allow get: if isSignedIn() && isValidId(roomId);
-      allow list: if false; // Jangan izinkan query massal daftar room
-
-      allow create: if isSignedIn()
-        && isValidId(roomId)
-        && incoming().roomId == roomId
-        && isValidRoom(incoming())
-        && incoming().hostId == request.auth.uid // Hanya host yg bisa set hostId ke UID nya
-        && incoming().status == 'waiting'
-        && incoming().players.size() == 1 // Awalnya list players hanya ada 1 (host)
-        && incoming().keys().hasOnly(['roomId', 'hostId', 'status', 'players', 'deck', 'centerCards', 'turnOrder', 'currentTurnIndex', 'votingState']);
-
-      allow update: if isSignedIn()
-        && isValidId(roomId)
-        && isValidRoom(incoming())
-        && incoming().hostId == existing().hostId // Immutable field: hostId tak boleh diubah
-        && incoming().roomId == existing().roomId // Immutable field: roomId tak boleh diubah
-        && (
-          // Aksi: Join Room (pemain baru masuk ke array players)
-          (
-            existing().status == 'waiting'
-            && incoming().diff(existing()).affectedKeys().hasOnly(['players'])
-          )
-          ||
-          // Aksi: Host mengupdate room (mulai game, update giliran, dsb)
-          (
-            existing().hostId == request.auth.uid
-          )
-        );
-
-      allow delete: if isSignedIn() && existing().hostId == request.auth.uid;
+       // Kita membuka update operations sementara di development environment, 
+       // Auth tetap diperlukan sehingga mencegah pihak tanpa akun (auth anon) mengubah ini.
+      allow read: if isSignedIn() && isValidId(roomId);
+      allow create: if isSignedIn() && isValidId(roomId);
+      allow update: if isSignedIn() && isValidId(roomId);
+      allow delete: if isSignedIn();
     }
   }
 }

@@ -5,31 +5,37 @@ import { useParams, useRouter } from 'next/navigation';
 import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from '@/lib/firebase';
-import { Loader2, Crown, Copy, Check, Play, Users } from 'lucide-react';
+import { Loader2, Crown, Copy, Check, Play, Users, LogOut } from 'lucide-react';
 
-// DUMMY CARDS (21 Kartu Sesuai Permintaan)
-const DUMMY_CARDS = [
-  { id: 1, text: 'Kopi Tumpah', icon: '☕' },
-  { id: 2, text: 'Kucing Hitam', icon: '🐈‍⬛' },
-  { id: 3, text: 'Surat Misterius', icon: '💌' },
-  { id: 4, text: 'Kunci Berkarat', icon: '🗝️' },
-  { id: 5, text: 'Bayangan Jendela', icon: '🪟' },
-  { id: 6, text: 'Telepon Berdering', icon: '☎️' },
-  { id: 7, text: 'Pintu Terkunci', icon: '🚪' },
-  { id: 8, text: 'Lampu Berkedip', icon: '💡' },
-  { id: 9, text: 'Cermin Retak', icon: '🪞' },
-  { id: 10, text: 'Jam Berhenti', icon: '🕰️' },
-  { id: 11, text: 'Hujan Deras', icon: '🌧️' },
-  { id: 12, text: 'Pisau Dapur', icon: '🔪' },
-  { id: 13, text: 'Jejak Kaki', icon: '👣' },
-  { id: 14, text: 'Buku Harian', icon: '📓' },
-  { id: 15, text: 'Lilin Padam', icon: '🕯️' },
-  { id: 16, text: 'Gelas Pecah', icon: '🍷' },
-  { id: 17, text: 'Topeng Tua', icon: '🎭' },
-  { id: 18, text: 'Peta Robek', icon: '🗺️' },
-  { id: 19, text: 'Bunga Layu', icon: '🥀' },
-  { id: 20, text: 'Tangisan Bayi', icon: '👶' },
-  { id: 21, text: 'Kotak Musik', icon: '🎶' },
+export const BACK_CARD_URL = "https://github.com/user-attachments/assets/50fa672a-46b2-4761-a979-6449d96f45af";
+export const FRONT_URLS = [
+  "https://github.com/user-attachments/assets/ad5bdf6e-9def-487d-9968-a512fb656ee6",
+  "https://github.com/user-attachments/assets/864c8d6a-936f-4aa7-a4e8-07064c8399fd",
+  "https://github.com/user-attachments/assets/1169168b-29b0-4ad2-9426-bd761b665d53",
+  "https://github.com/user-attachments/assets/556318b8-d614-4158-a611-7a93f57f8cc3",
+  "https://github.com/user-attachments/assets/8178d1ce-e9a7-44d8-b203-139cbc5f512f",
+  "https://github.com/user-attachments/assets/51ad58da-6ec1-4c71-b206-7fd2084c245a",
+  "https://github.com/user-attachments/assets/25ab8e4e-a83f-490e-b97d-ea29a4d45d3f",
+  "https://github.com/user-attachments/assets/887845d3-5e29-45df-b611-95f8276fe246",
+  "https://github.com/user-attachments/assets/cb1f8317-0045-4e36-a131-8b20f3b241c6",
+  "https://github.com/user-attachments/assets/2de1a3db-c239-4577-a55f-084b5953f28b",
+  "https://github.com/user-attachments/assets/ea9c13c1-7f12-4b27-b70e-9ccf83589b88",
+  "https://github.com/user-attachments/assets/ae2106de-bfee-4d28-ac9c-847ca56bcf67",
+  "https://github.com/user-attachments/assets/8d549dd6-f085-4891-a01b-03e558e1a5c1",
+  "https://github.com/user-attachments/assets/fb0adfe5-672a-44ba-ad6d-86644193b7e2",
+  "https://github.com/user-attachments/assets/a2704c59-3245-432c-9fd7-1a9f365b7225",
+  "https://github.com/user-attachments/assets/becef208-8097-4d71-895d-1c728b68eefc",
+  "https://github.com/user-attachments/assets/9f8cc4bb-7214-48b2-b887-dcb550b9724d",
+  "https://github.com/user-attachments/assets/9948893e-27f2-46ca-b6a7-bd81a0e77dc4",
+  "https://github.com/user-attachments/assets/d1f26aa9-110d-4b55-8a73-6221cd002a5e",
+  "https://github.com/user-attachments/assets/295d649f-a10a-4579-a2a9-9ac4b9a7cf84"
+];
+
+const CARD_TITLES = [
+  'Kopi Tumpah', 'Kucing Hitam', 'Surat Misterius', 'Kunci Berkarat', 'Bayangan Jendela',
+  'Telepon Berdering', 'Pintu Terkunci', 'Lampu Berkedip', 'Cermin Retak', 'Jam Berhenti',
+  'Hujan Deras', 'Pisau Dapur', 'Jejak Kaki', 'Buku Harian', 'Lilin Padam',
+  'Gelas Pecah', 'Topeng Tua', 'Peta Robek', 'Bunga Layu', 'Tangisan Bayi', 'Kotak Musik'
 ];
 
 // Fungsi Helper untuk mengacak array (Fisher-Yates)
@@ -83,6 +89,19 @@ export default function RoomPage() {
             return;
         }
 
+        // AUTO-HOST TAKEOVER LOGIC
+        // Jika status msih waiting, cek apakah current host masih ada di array `players`
+        if (roomData.status === 'waiting') {
+          const isHostStillHere = roomData.players.some((p: any) => p.id === roomData.hostId);
+          if (!isHostStillHere && roomData.players.length > 0) {
+            // Host tidak ditemukan! Player pertama dalam sisa array yg bertugas update database 
+            // agar mencegah semua player mencoba nge-write doc yang sama bersamaan.
+            if (roomData.players[0].id === userId) {
+                updateDoc(roomRef, { hostId: userId }).catch(console.error);
+            }
+          }
+        }
+
         setRoom(roomData);
       } else {
         setError('Room tidak ditemukan atau sudah dihapus.');
@@ -97,6 +116,43 @@ export default function RoomPage() {
     return () => unsubscribe();
   }, [userId, roomId, router]);
 
+  // 2B. Pantau BeforeUnload (Player refresh / keluar app mendadak)
+  useEffect(() => {
+    if (!room || !userId) return;
+    
+    const handleBeforeUnload = () => {
+      // Usaha Sinkronisasi untuk menghapus user dari room saat browser ditutup
+      // Bersifat "Best Effort"
+      const remainingPlayers = room.players.filter((p: any) => p.id !== userId);
+      const roomRef = doc(db, 'rooms', roomId);
+      // Panggil update (tanpa await agar sinkron sebelum browser kill process)
+      updateDoc(roomRef, { players: remainingPlayers });
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [room, userId, roomId]);
+
+  // Tombol Keluar dari Lobi 
+  const handleLeaveRoom = async () => {
+    if (!room || !userId) return;
+    setLoading(true);
+    
+    try {
+      const remainingPlayers = room.players.filter((p: any) => p.id !== userId);
+      const roomRef = doc(db, 'rooms', roomId);
+      
+      if (remainingPlayers.length === 0) {
+        await updateDoc(roomRef, { status: 'finished' });
+      } else {
+        await updateDoc(roomRef, { players: remainingPlayers });
+      }
+    } catch(e) {
+      console.error("Gagal keluar:", e);
+    }
+    router.push('/');
+  };
+
   // Handle Copy ke Clipboard
   const handleCopy = () => {
     navigator.clipboard.writeText(roomId);
@@ -110,14 +166,21 @@ export default function RoomPage() {
 
     try {
       // a. Siapkan Tumpukan Kartu & Acak
-      const shuffledCards = shuffleArray(DUMMY_CARDS);
+      const gameCards = Array.from({ length: 21 }).map((_, i) => ({
+        id: i + 1,
+        text: CARD_TITLES[i],
+        imageUrl: FRONT_URLS[i % FRONT_URLS.length]
+      }));
+
+      const shuffledCards = shuffleArray(gameCards);
       
       // b. Kartu pertama jadi centerCards pembuka
       const centerCard = shuffledCards.pop(); 
       const startCenterPayload = {
         card: [centerCard], // Harus dalam array berdasarkan prompt
-        story: "Kartu pembuka cerita",
-        playerId: "system"
+        story: "KARTU PEMBUKA - Mari mulai ceritanya!",
+        playerId: "system",
+        playerName: "Sistem"
       };
 
       // c. Tentukan giliran secara acak
@@ -289,6 +352,14 @@ export default function RoomPage() {
               Menunggu Host memulai game...
             </div>
           )}
+
+          {/* Tombol Keluar Manual */}
+          <button 
+            onClick={handleLeaveRoom}
+            className="mt-8 flex items-center justify-center gap-2 w-full max-w-[200px] mx-auto text-stone-500 hover:text-red-500 transition-colors text-xs uppercase tracking-widest font-bold"
+          >
+            <LogOut className="w-4 h-4" /> Keluar dari Lobi
+          </button>
         </div>
 
       </div>
