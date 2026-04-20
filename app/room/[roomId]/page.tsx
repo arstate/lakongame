@@ -38,10 +38,12 @@ const WebRTCVoiceChat = ({ roomId, userId, players, inGame }: { roomId: string, 
   const pendingIceRef = useRef<Record<string, RTCIceCandidateInit[]>>({});
   
   const servers = useMemo(() => ({
-    iceServers: [
-      { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun2.l.google.com:19302' }
-    ]
+    iceServers: [{ 
+      urls: [
+        'stun:stun1.l.google.com:19302', 
+        'stun:stun2.l.google.com:19302'
+      ] 
+    }]
   }), []);
 
   useEffect(() => {
@@ -239,31 +241,31 @@ const WebRTCVoiceChat = ({ roomId, userId, players, inGame }: { roomId: string, 
              <div className="w-16 h-16 bg-red-600/20 text-red-500 flex items-center justify-center rounded-full mx-auto mb-4">
                 <Mic className="w-8 h-8" />
              </div>
-             <h3 className="text-xl font-bold text-white mb-2">Izin Mikrofon</h3>
-             <p className="text-sm text-stone-400 mb-6">
-               Game ini menggunakan fitur Voice Chat P2P Real-time antar pemain. Izinkan mikrofon untuk berkomunikasi!
+             <h3 className="text-xl font-black text-white mb-2 uppercase tracking-widest">Voice Chat</h3>
+             <p className="text-sm text-stone-400 mb-6 font-medium">
+               Klik tombol di bawah untuk bergabung ke percakapan suara real-time. (Wajib klik untuk pengguna iOS/Safari).
              </p>
              <button 
                 onClick={grantPermissionAndStart}
-                className="w-full bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-xl uppercase tracking-widest text-xs transition-colors"
+                className="w-full bg-red-600 hover:bg-red-500 text-white font-black py-4 rounded-xl uppercase tracking-widest text-sm transition-all shadow-[0_0_20px_rgba(220,38,38,0.4)] active:scale-95"
              >
-                Berikan Izin & Mulai
+                Gabung Voice Chat (Wajib klik untuk iOS)
              </button>
              <button 
                 onClick={startListenOnly}
-                className="w-full bg-transparent hover:bg-stone-700 text-stone-400 font-bold py-3 mt-2 rounded-xl uppercase tracking-widest text-xs transition-colors"
+                className="w-full bg-transparent hover:bg-stone-700 text-stone-500 font-bold py-3 mt-4 rounded-xl uppercase tracking-widest text-[10px] transition-colors"
              >
-                Abaikan (Pemain Bisu)
+                Cuma Dengerin (Pemain Bisu)
              </button>
            </div>
          </div>
       )}
 
       {needsAudioUnlock && (
-         <div className="fixed bottom-24 right-6 z-50 pointer-events-auto">
+         <div className="fixed bottom-24 right-6 z-[60] pointer-events-auto">
            <button 
              onClick={unlockAudioDevice}
-             className="bg-blue-600 animate-bounce hover:bg-blue-500 text-white shadow-[0_0_20px_rgba(37,99,235,0.6)] px-4 py-3 border border-blue-400 rounded-full font-bold flex items-center gap-2"
+             className="bg-blue-600 animate-bounce hover:bg-blue-500 text-white shadow-[0_0_20px_rgba(37,99,235,0.6)] px-5 py-4 border border-blue-400 rounded-full font-black text-sm flex items-center gap-2 uppercase tracking-widest"
            >
              <VolumeX className="w-5 h-5 text-yellow-300" />
              Ketuk untuk Putar Suara!
@@ -271,7 +273,7 @@ const WebRTCVoiceChat = ({ roomId, userId, players, inGame }: { roomId: string, 
          </div>
       )}
 
-      <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-3 pointer-events-none">
+      <div className="fixed bottom-6 right-6 z-[60] flex flex-col items-end gap-3 pointer-events-none">
          {Object.entries(remoteStreams).map(([peerId, stream]) => (
            <AudioPlayer 
              key={peerId} 
@@ -282,17 +284,23 @@ const WebRTCVoiceChat = ({ roomId, userId, players, inGame }: { roomId: string, 
            />
          ))}
          {errorMsg && (
-           <div className="bg-red-900/90 text-white text-xs px-4 py-2 rounded-lg border border-red-500 shadow-xl pointer-events-auto">
+           <div className="bg-red-950/95 text-red-100 text-[10px] uppercase font-bold tracking-widest px-4 py-2 rounded-lg border border-red-500/50 shadow-2xl pointer-events-auto max-w-[200px] text-center mb-2">
              {errorMsg}
            </div>
          )}
          {isInitialized && !errorMsg && (
             <button 
               onClick={toggleMic}
-              className={`p-4 rounded-full shadow-2xl transition-all flex items-center justify-center pointer-events-auto ${micOn ? 'bg-green-500 hover:bg-green-600 animate-pulse shadow-[0_0_20px_rgba(34,197,94,0.6)] text-white' : 'bg-stone-800 hover:bg-stone-700 text-red-500 border border-stone-700'}`}
+              className={`p-5 rounded-full shadow-2xl transition-all flex items-center justify-center pointer-events-auto group relative ${micOn ? 'bg-green-600 hover:bg-green-500 text-white' : 'bg-stone-800 hover:bg-stone-700 text-red-500 border border-stone-700'}`}
               title={micOn ? "Matikan Mic" : "Nyalakan Mic"}
             >
-              {micOn ? <Mic className="w-6 h-6" /> : <MicOff className="w-6 h-6" />}
+              {micOn && (
+                <span className="absolute inset-0 rounded-full bg-green-500 animate-ping opacity-25"></span>
+              )}
+              {micOn && (
+                <span className="absolute -inset-1 rounded-full border-2 border-green-500/30 animate-pulse"></span>
+              )}
+              {micOn ? <Mic className="w-7 h-7 relative z-10" /> : <MicOff className="w-7 h-7 relative z-10" />}
             </button>
          )}
       </div>
@@ -1007,7 +1015,7 @@ export default function RoomPage() {
                           className="w-full aspect-[2/3] object-cover rounded-xl shadow-[0_0_20px_rgba(220,38,38,0.2)] border-2 border-stone-700"
                        />
                        <div className="bg-stone-800/80 backdrop-blur border border-stone-700 p-3 rounded-lg w-full text-sm text-center italic text-stone-300">
-                          "{cCard.story}"
+                          &quot;{cCard.story}&quot;
                           <div className="mt-2 text-[10px] text-red-400 font-bold tracking-wider not-italic uppercase">- {cCard.playerName}</div>
                        </div>
                     </motion.div>
@@ -1084,7 +1092,7 @@ export default function RoomPage() {
                        className="w-48 aspect-[2/3] object-cover rounded-xl shadow-2xl border-4 border-stone-800 -mt-2 z-10"
                     />
                     <div className="bg-stone-800/50 border border-stone-700 w-full mt-6 p-4 rounded-xl text-center italic text-stone-200">
-                       "{room.votingState.story}"
+                       &quot;{room.votingState.story}&quot;
                     </div>
 
                     <div className="w-full mt-8">
