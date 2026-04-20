@@ -5,19 +5,22 @@ import { useParams, useRouter } from 'next/navigation';
 import { doc, onSnapshot, updateDoc, collection, query, orderBy, addDoc, serverTimestamp, deleteDoc, where } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from '@/lib/firebase';
-import { Loader2, Crown, Copy, Check, Play, Users, LogOut, Send, MessageSquare, Mic, MicOff } from 'lucide-react';
+import { Loader2, Crown, Copy, Check, Play, Users, LogOut, Send, MessageSquare, Mic, MicOff, Volume2, VolumeX } from 'lucide-react';
 import { motion } from 'motion/react';
 import { BACK_CARD_URL, FRONT_URLS, CARD_TITLES } from '@/lib/constants';
 
-const AudioPlayer = ({ stream, peerId }: { stream: MediaStream, peerId: string }) => {
+const AudioPlayer = ({ stream, peerId, onPlayError, playTrigger }: { stream: MediaStream, peerId: string, onPlayError: () => void, playTrigger: number }) => {
   const audioRef = useRef<HTMLAudioElement>(null);
   useEffect(() => {
     if (audioRef.current && stream) {
       audioRef.current.srcObject = stream;
-      audioRef.current.play().catch(e => console.error("AutoPlay failed for user", peerId, ":", e));
+      audioRef.current.play().catch(e => {
+        console.error("AutoPlay failed for user", peerId, ":", e);
+        onPlayError();
+      });
     }
-  }, [stream, peerId]);
-  return <audio ref={audioRef} autoPlay playsInline className="hidden" />;
+  }, [stream, peerId, playTrigger, onPlayError]);
+  return <audio ref={audioRef} playsInline className="hidden" />;
 };
 
 const WebRTCVoiceChat = ({ roomId, userId, players, inGame }: { roomId: string, userId: string, players: any[], inGame: boolean }) => {
@@ -28,6 +31,8 @@ const WebRTCVoiceChat = ({ roomId, userId, players, inGame }: { roomId: string, 
   
   const [isPendingPermission, setIsPendingPermission] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
+  const [needsAudioUnlock, setNeedsAudioUnlock] = useState(false);
+  const [playTrigger, setPlayTrigger] = useState(0);
 
   const peersRef = useRef<Record<string, RTCPeerConnection>>({});
   const pendingIceRef = useRef<Record<string, RTCIceCandidateInit[]>>({});
@@ -66,11 +71,13 @@ const WebRTCVoiceChat = ({ roomId, userId, players, inGame }: { roomId: string, 
       setLocalStream(stream);
       setIsPendingPermission(false);
       setIsInitialized(true);
+      unlockAudioDevice();
     } catch (err) {
       console.error("Mic permission denied", err);
-      setErrorMsg("Izin mic ditolak.");
+      setErrorMsg("Izin mic ditolak. Coba muat ulang & izinkan mikrofon untuk browser ini.");
       setIsPendingPermission(false);
       setIsInitialized(true);
+      unlockAudioDevice();
     }
   };
 
@@ -78,6 +85,15 @@ const WebRTCVoiceChat = ({ roomId, userId, players, inGame }: { roomId: string, 
      setLocalStream(null);
      setIsPendingPermission(false);
      setIsInitialized(true);
+     unlockAudioDevice();
+  };
+
+  const unlockAudioDevice = () => {
+    // Memancing HTML5 Audio untuk menyala setelah interaksi pengguna
+    const dummyAudio = new window.Audio();
+    dummyAudio.play().catch(() => {});
+    setNeedsAudioUnlock(false);
+    setPlayTrigger(prev => prev + 1);
   };
 
   const setupTracks = (pc: RTCPeerConnection) => {
@@ -163,7 +179,7 @@ const WebRTCVoiceChat = ({ roomId, userId, players, inGame }: { roomId: string, 
     });
     
     return () => unsubscribe();
-  }, [isInitialized, inGame, roomId, userId, localStream, servers]);
+  }, [isInitialized, inGame, roomId, userId, localStream, servers]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Send offers to new players
   useEffect(() => {
@@ -194,7 +210,7 @@ const WebRTCVoiceChat = ({ roomId, userId, players, inGame }: { roomId: string, 
         await addDoc(signalingRef, { from: userId, to: peerId, type: 'offer', payload: { type: offer.type, sdp: offer.sdp }, createdAt: serverTimestamp() });
       }
     });
-  }, [players, isInitialized, inGame, roomId, userId, localStream, servers]);
+  }, [players, isInitialized, inGame, roomId, userId, localStream, servers]); // eslint-disable-line react-hooks/exhaustive-deps
 
   
   useEffect(() => {
@@ -243,9 +259,27 @@ const WebRTCVoiceChat = ({ roomId, userId, players, inGame }: { roomId: string, 
          </div>
       )}
 
+      {needsAudioUnlock && (
+         <div className="fixed bottom-24 right-6 z-50 pointer-events-auto">
+           <button 
+             onClick={unlockAudioDevice}
+             className="bg-blue-600 animate-bounce hover:bg-blue-500 text-white shadow-[0_0_20px_rgba(37,99,235,0.6)] px-4 py-3 border border-blue-400 rounded-full font-bold flex items-center gap-2"
+           >
+             <VolumeX className="w-5 h-5 text-yellow-300" />
+             Ketuk untuk Putar Suara!
+           </button>
+         </div>
+      )}
+
       <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-3 pointer-events-none">
          {Object.entries(remoteStreams).map(([peerId, stream]) => (
-           <AudioPlayer key={peerId} peerId={peerId} stream={stream} />
+           <AudioPlayer 
+             key={peerId} 
+             peerId={peerId} 
+             stream={stream} 
+             playTrigger={playTrigger}
+             onPlayError={() => setNeedsAudioUnlock(true)}
+           />
          ))}
          {errorMsg && (
            <div className="bg-red-900/90 text-white text-xs px-4 py-2 rounded-lg border border-red-500 shadow-xl pointer-events-auto">
