@@ -6,6 +6,9 @@ import { doc, onSnapshot, updateDoc, collection, query, orderBy, addDoc, serverT
 import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from '@/lib/firebase';
 import { Loader2, Crown, Copy, Check, Play, Users, LogOut, Send, MessageSquare } from 'lucide-react';
+import { motion } from 'motion/react';
+
+type IntroPhase = 'idle' | 'shuffling_players' | 'showing_players' | 'shuffling_cards' | 'countdown_3' | 'countdown_2' | 'countdown_1' | 'countdown_go';
 
 const BACK_CARD_URL = "https://github.com/user-attachments/assets/50fa672a-46b2-4761-a979-6449d96f45af";
 const FRONT_URLS = [
@@ -63,6 +66,10 @@ export default function RoomPage() {
   const [messages, setMessages] = useState<any[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // === INTRO STATE ===
+  const [introPhase, setIntroPhase] = useState<IntroPhase>('idle');
+  const [localTurnOrder, setLocalTurnOrder] = useState<any[]>([]);
 
   // Scroll otomatis ke chat terbaru
   useEffect(() => {
@@ -156,6 +163,51 @@ export default function RoomPage() {
     return () => unsubscribe();
   }, [roomId]);
 
+  // === INTRO SEQUENCE LOGIC ===
+  useEffect(() => {
+    if (room?.status === 'intro' && introPhase === 'idle') {
+       setIntroPhase('shuffling_players');
+       setLocalTurnOrder(shuffleArray([...room.players]));
+    }
+  }, [room?.status, introPhase, room?.players]);
+
+  useEffect(() => {
+    if (room?.status !== 'intro') {
+        if (introPhase !== 'idle') setIntroPhase('idle');
+        return;
+    }
+
+    let timer: NodeJS.Timeout;
+    const isHost = room.hostId === userId;
+
+    switch(introPhase) {
+      case 'shuffling_players':
+        timer = setTimeout(() => setIntroPhase('showing_players'), 2000);
+        break;
+      case 'showing_players':
+        timer = setTimeout(() => setIntroPhase('shuffling_cards'), 2500);
+        break;
+      case 'shuffling_cards':
+        timer = setTimeout(() => setIntroPhase('countdown_3'), 2000);
+        break;
+      case 'countdown_3':
+        timer = setTimeout(() => setIntroPhase('countdown_2'), 1000);
+        break;
+      case 'countdown_2':
+        timer = setTimeout(() => setIntroPhase('countdown_1'), 1000);
+        break;
+      case 'countdown_1':
+        timer = setTimeout(() => setIntroPhase('countdown_go'), 1000);
+        break;
+      case 'countdown_go':
+         if (isHost) {
+             timer = setTimeout(() => finalizeGameSetup(localTurnOrder), 1000);
+         }
+        break;
+    }
+    return () => clearTimeout(timer);
+  }, [introPhase, room?.status, userId, roomId, localTurnOrder]);
+
   // Tombol Keluar dari Lobi 
   const handleLeaveRoom = async () => {
     if (!room || !userId) return;
@@ -204,12 +256,22 @@ export default function RoomPage() {
     }
   };
 
-  // 3. Fungsi Memulai Game Sesuai Tugas 2
+  // 3. Fungsi Memulai Game (Intro Trigger)
   const startGame = async () => {
+    if (!room || room.hostId !== userId) return;
+    try {
+      const roomRef = doc(db, 'rooms', roomId);
+      await updateDoc(roomRef, { status: 'intro' });
+    } catch (err) {
+      console.error("Gagal memulai intro:", err);
+      setError("Gagal memulai game.");
+    }
+  };
+
+  const finalizeGameSetup = async (finalTurnOrder: any[]) => {
     if (!room || room.hostId !== userId) return;
 
     try {
-      // a. Siapkan Tumpukan Kartu & Acak
       const gameCards = Array.from({ length: 21 }).map((_, i) => ({
         id: i + 1,
         text: CARD_TITLES[i],
@@ -218,29 +280,26 @@ export default function RoomPage() {
 
       const shuffledCards = shuffleArray(gameCards);
       
-      // b. Kartu pertama jadi centerCards pembuka
       const centerCard = shuffledCards.pop(); 
       const startCenterPayload = {
-        card: [centerCard], // Harus dalam array berdasarkan prompt
+        card: [centerCard],
         story: "KARTU PEMBUKA - Mari mulai ceritanya!",
         playerId: "system",
         playerName: "Sistem"
       };
 
-      // c. Tentukan giliran secara acak
-      const turnOrder = shuffleArray(room.players.map((p: any) => p.id));
+      const turnOrderIds = finalTurnOrder.map((p: any) => p.id);
 
-      // d. Update dokumen room: ubah status ke playing
       const roomRef = doc(db, 'rooms', roomId);
       await updateDoc(roomRef, {
         status: 'playing',
         deck: shuffledCards,
         centerCards: [startCenterPayload],
-        turnOrder: turnOrder,
+        turnOrder: turnOrderIds,
         currentTurnIndex: 0
       });
     } catch (err) {
-      console.error("Gagal memulai game:", err);
+      console.error("Gagal setup game:", err);
       setError("Terjadi kesalahan saat mesin memproses permainan.");
     }
   };
@@ -264,6 +323,83 @@ export default function RoomPage() {
             Kembali ke Beranda
           </button>
         </div>
+      </div>
+    );
+  }
+
+  // State: Sedang Intro Animasi
+  if (room && room.status === 'intro') {
+    return (
+      <div className="fixed inset-0 z-50 bg-stone-950 flex flex-col items-center justify-center text-stone-100 overflow-hidden font-sans">
+        
+        {introPhase === 'shuffling_players' && (
+          <motion.div initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} className="flex flex-col items-center gap-6">
+            <Users className="w-20 h-20 text-red-500 animate-pulse" />
+            <h2 className="text-2xl md:text-3xl font-black tracking-widest uppercase text-stone-300 text-center">Mengacak Urutan Pemain...</h2>
+          </motion.div>
+        )}
+
+        {introPhase === 'showing_players' && (
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col w-full max-w-lg px-6 gap-4">
+            <h2 className="text-xl md:text-2xl font-bold tracking-widest uppercase text-center text-stone-400 mb-6">Urutan Bermain</h2>
+            {localTurnOrder.map((player, idx) => (
+              <motion.div 
+                 key={player.id}
+                 initial={{ opacity: 0, x: -50 }}
+                 animate={{ opacity: 1, x: 0 }}
+                 transition={{ delay: idx * 0.3 }}
+                 className="flex items-center gap-4 bg-stone-800 p-4 rounded-xl border border-stone-700"
+              >
+                 <div className="w-10 h-10 rounded-full bg-red-600 flex items-center justify-center font-black text-xl shadow-lg shrink-0">
+                    {idx + 1}
+                 </div>
+                 <span className="text-xl font-bold truncate">{player.name} {player.id === userId && <span className="text-stone-500 text-sm ml-2">(Kamu)</span>}</span>
+              </motion.div>
+            ))}
+          </motion.div>
+        )}
+
+        {introPhase === 'shuffling_cards' && (
+          <motion.div initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} className="flex flex-col items-center gap-8">
+            <div className="flex justify-center items-center relative h-40 w-48 mt-8">
+               {[0,1,2].map(i => (
+                  <motion.div 
+                    key={i} 
+                    style={{ backgroundImage: `url(${BACK_CARD_URL})`, backgroundSize: 'cover' }}
+                    animate={{ rotate: 360, x: [0, (i-1)*30, 0] }} 
+                    transition={{ duration: 1.5, repeat: Infinity, delay: i * 0.1 }} 
+                    className="absolute w-24 h-40 rounded-xl shadow-[0_0_30px_rgba(0,0,0,0.8)] border border-stone-700" 
+                  />
+               ))}
+            </div>
+            <h2 className="text-2xl md:text-3xl font-black tracking-widest uppercase text-stone-300 mt-4 text-center">Mengacak Kartu...</h2>
+          </motion.div>
+        )}
+
+        {['countdown_3', 'countdown_2', 'countdown_1'].includes(introPhase) && (
+          <motion.div 
+             key={introPhase}
+             initial={{ opacity: 0, scale: 2 }} 
+             animate={{ opacity: 1, scale: 1 }} 
+             exit={{ opacity: 0, scale: 0 }}
+             transition={{ duration: 0.4 }}
+             className="text-[12rem] font-black text-red-500 drop-shadow-[0_0_80px_rgba(220,38,38,0.8)]"
+          >
+            {introPhase.split('_')[1]}
+          </motion.div>
+        )}
+
+        {introPhase === 'countdown_go' && (
+           <motion.div 
+             initial={{ opacity: 0, scale: 0.5, rotate: -10 }} 
+             animate={{ opacity: 1, scale: 1.5, rotate: 0 }} 
+             transition={{ type: "spring", stiffness: 200 }}
+             className="text-[10rem] md:text-[14rem] font-black text-red-500 drop-shadow-[0_0_100px_rgba(220,38,38,1)] tracking-tighter"
+           >
+             GO!
+           </motion.div>
+        )}
+
       </div>
     );
   }
