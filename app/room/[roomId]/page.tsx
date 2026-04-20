@@ -7,39 +7,9 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from '@/lib/firebase';
 import { Loader2, Crown, Copy, Check, Play, Users, LogOut, Send, MessageSquare } from 'lucide-react';
 import { motion } from 'motion/react';
+import { BACK_CARD_URL, FRONT_URLS, CARD_TITLES } from '@/lib/constants';
 
 type IntroPhase = 'idle' | 'shuffling_players' | 'showing_players' | 'shuffling_cards' | 'countdown_3' | 'countdown_2' | 'countdown_1' | 'countdown_go';
-
-const BACK_CARD_URL = "https://github.com/user-attachments/assets/50fa672a-46b2-4761-a979-6449d96f45af";
-const FRONT_URLS = [
-  "https://github.com/user-attachments/assets/ad5bdf6e-9def-487d-9968-a512fb656ee6",
-  "https://github.com/user-attachments/assets/864c8d6a-936f-4aa7-a4e8-07064c8399fd",
-  "https://github.com/user-attachments/assets/1169168b-29b0-4ad2-9426-bd761b665d53",
-  "https://github.com/user-attachments/assets/556318b8-d614-4158-a611-7a93f57f8cc3",
-  "https://github.com/user-attachments/assets/8178d1ce-e9a7-44d8-b203-139cbc5f512f",
-  "https://github.com/user-attachments/assets/51ad58da-6ec1-4c71-b206-7fd2084c245a",
-  "https://github.com/user-attachments/assets/25ab8e4e-a83f-490e-b97d-ea29a4d45d3f",
-  "https://github.com/user-attachments/assets/887845d3-5e29-45df-b611-95f8276fe246",
-  "https://github.com/user-attachments/assets/cb1f8317-0045-4e36-a131-8b20f3b241c6",
-  "https://github.com/user-attachments/assets/2de1a3db-c239-4577-a55f-084b5953f28b",
-  "https://github.com/user-attachments/assets/ea9c13c1-7f12-4b27-b70e-9ccf83589b88",
-  "https://github.com/user-attachments/assets/ae2106de-bfee-4d28-ac9c-847ca56bcf67",
-  "https://github.com/user-attachments/assets/8d549dd6-f085-4891-a01b-03e558e1a5c1",
-  "https://github.com/user-attachments/assets/fb0adfe5-672a-44ba-ad6d-86644193b7e2",
-  "https://github.com/user-attachments/assets/a2704c59-3245-432c-9fd7-1a9f365b7225",
-  "https://github.com/user-attachments/assets/becef208-8097-4d71-895d-1c728b68eefc",
-  "https://github.com/user-attachments/assets/9f8cc4bb-7214-48b2-b887-dcb550b9724d",
-  "https://github.com/user-attachments/assets/9948893e-27f2-46ca-b6a7-bd81a0e77dc4",
-  "https://github.com/user-attachments/assets/d1f26aa9-110d-4b55-8a73-6221cd002a5e",
-  "https://github.com/user-attachments/assets/295d649f-a10a-4579-a2a9-9ac4b9a7cf84"
-];
-
-const CARD_TITLES = [
-  'Kopi Tumpah', 'Kucing Hitam', 'Surat Misterius', 'Kunci Berkarat', 'Bayangan Jendela',
-  'Telepon Berdering', 'Pintu Terkunci', 'Lampu Berkedip', 'Cermin Retak', 'Jam Berhenti',
-  'Hujan Deras', 'Pisau Dapur', 'Jejak Kaki', 'Buku Harian', 'Lilin Padam',
-  'Gelas Pecah', 'Topeng Tua', 'Peta Robek', 'Bunga Layu', 'Tangisan Bayi', 'Kotak Musik'
-];
 
 // Fungsi Helper untuk mengacak array (Fisher-Yates)
 const shuffleArray = <T,>(array: T[]): T[] => {
@@ -70,6 +40,34 @@ export default function RoomPage() {
   // === INTRO STATE ===
   const [introPhase, setIntroPhase] = useState<IntroPhase>('idle');
   const [localTurnOrder, setLocalTurnOrder] = useState<any[]>([]);
+
+  // === PLAYING STATE ===
+  const isMyTurn = room?.status === 'playing' && room?.turnOrder?.[room.currentTurnIndex] === userId;
+  const [activeDrawnCard, setActiveDrawnCard] = useState<any>(null);
+  const [storyInput, setStoryInput] = useState('');
+  const hasDrawn = useRef(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Auto-draw Logic
+  useEffect(() => {
+    // Jalankan auto-draw HANYA jika status bermain, giliran sendiri, belum narik kartu, dan proses voting belum aktif
+    if (room?.status === 'playing' && isMyTurn && !activeDrawnCard && !room?.votingState?.active && !hasDrawn.current) {
+      hasDrawn.current = true; // Lock agar tak loop atau double draw
+      const currentDeck = [...(room?.deck || [])];
+      if (currentDeck.length > 0) {
+        const drawn = currentDeck.pop();
+        setActiveDrawnCard(drawn); // Simpan di local state
+        
+        // Buang dari database deck
+        const roomRef = doc(db, 'rooms', roomId);
+        updateDoc(roomRef, { deck: currentDeck }).catch(console.error);
+      }
+    }
+    // Jika bukan giliran, pastikan reset flag
+    if (!isMyTurn) {
+       hasDrawn.current = false;
+    }
+  }, [room?.status, isMyTurn, activeDrawnCard, room?.votingState?.active, room?.deck, roomId]);
 
   // Scroll otomatis ke chat terbaru
   useEffect(() => {
@@ -296,12 +294,39 @@ export default function RoomPage() {
         deck: shuffledCards,
         centerCards: [startCenterPayload],
         turnOrder: turnOrderIds,
-        currentTurnIndex: 0
+        currentTurnIndex: 0,
+        votingState: null
       });
     } catch (err) {
       console.error("Gagal setup game:", err);
       setError("Terjadi kesalahan saat mesin memproses permainan.");
     }
+  };
+
+  const submitStory = async () => {
+    if (!storyInput.trim() || !activeDrawnCard || !room) return;
+    const myPlayer = room.players.find((p: any) => p.id === userId);
+    
+    setIsSubmitting(true);
+    try {
+       const roomRef = doc(db, 'rooms', roomId);
+       await updateDoc(roomRef, {
+          votingState: {
+             active: true,
+             playerId: userId,
+             playerName: myPlayer?.name || 'Pemain',
+             card: activeDrawnCard,
+             story: storyInput.trim(),
+             votes: {}
+          }
+       });
+       // Selesai submit, bersihkan state lokal
+       setActiveDrawnCard(null);
+       setStoryInput('');
+    } catch(err) {
+       console.error("Gagal submit cerita:", err);
+    }
+    setIsSubmitting(false);
   };
 
   // State: Sedang Loading
@@ -404,18 +429,90 @@ export default function RoomPage() {
     );
   }
 
-  // State: Sedang Bermain (Playing) -> [Akan dikerjakan di tugas selanjutnya]
+  // State: Sedang Bermain (Playing)
   if (room && room.status === 'playing') {
     return (
-      <div className="min-h-screen bg-stone-900 text-stone-100 flex flex-col items-center justify-center font-sans p-6 text-center">
-        <div className="text-red-500 mb-4 animate-pulse">
-          <Play className="w-16 h-16 mx-auto" />
+      <div className="min-h-screen bg-stone-900 text-stone-100 p-6 md:p-12 font-sans overflow-x-hidden overflow-y-auto w-full">
+        <h2 className="text-3xl font-black mb-8 text-center tracking-widest text-red-500 uppercase">Arena Bermain</h2>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-6 max-w-6xl mx-auto items-start w-full">
+           {/* 1. Gambar Tumpukan Kartu Deck */}
+           <div className="flex flex-col items-center">
+              <motion.img 
+                 src={BACK_CARD_URL} 
+                 alt="Tumpukan Deck"
+                 className="w-full aspect-[2/3] object-cover rounded-xl shadow-[0_0_20px_rgba(0,0,0,0.6)] border-2 border-stone-800"
+              />
+              <span className="mt-3 text-xs font-bold text-stone-500 bg-stone-800 px-3 py-1 rounded-full uppercase tracking-widest">
+                 Sisa Deck: {room.deck?.length || 0}
+              </span>
+           </div>
+
+           {/* 2 & 3 & seterusnya... Render Kartu Center/Meja */}
+           {room.centerCards?.map((cCard: any, idx: number) => (
+              <motion.div 
+                 key={`center-${idx}`}
+                 initial={{ rotateY: -180, opacity: 0 }}
+                 animate={{ rotateY: 0, opacity: 1 }}
+                 transition={{ duration: 0.6, type: "spring", bounce: 0.3 }}
+                 style={{ transformStyle: "preserve-3d", perspective: 1200 }}
+                 className="flex flex-col items-center gap-3 w-full"
+              >
+                 <img 
+                    src={cCard.card[0].imageUrl} 
+                    alt={`Kartu Center ${idx + 1}`}
+                    className="w-full aspect-[2/3] object-cover rounded-xl shadow-[0_0_20px_rgba(220,38,38,0.2)] border-2 border-stone-700"
+                 />
+                 <div className="bg-stone-800/80 backdrop-blur border border-stone-700 p-3 rounded-lg w-full text-sm text-center italic text-stone-300">
+                    "{cCard.story}"
+                    <div className="mt-2 text-[10px] text-red-400 font-bold tracking-wider not-italic uppercase">- {cCard.playerName}</div>
+                 </div>
+              </motion.div>
+           ))}
+
+           {/* Grid Tambahan Khusus User Yang Sedang Gilirannya (Jika dia memegang local activeDrawnCard) */}
+           {activeDrawnCard && isMyTurn && !room.votingState?.active && (
+              <motion.div 
+                 initial={{ scale: 0.8, opacity: 0, y: 50 }}
+                 animate={{ scale: 1, opacity: 1, y: 0 }}
+                 className="flex flex-col items-center gap-3 col-span-2 md:col-span-1 w-full"
+              >
+                 <img 
+                    src={activeDrawnCard.imageUrl}
+                    alt="Kartu Di Tangan"
+                    className="w-[80%] md:w-full aspect-[2/3] object-cover rounded-xl shadow-[0_0_40px_rgba(220,38,38,0.4)] border-2 border-red-500"
+                 />
+                 <div className="w-full flex-col flex gap-2">
+                    <label className="text-[10px] text-stone-400 font-bold uppercase tracking-widest text-center mt-2">
+                       Cerita harus nyambung dari awal mula kartu!
+                    </label>
+                    <textarea 
+                       value={storyInput}
+                       onChange={e => setStoryInput(e.target.value)}
+                       className="w-full bg-stone-950 border border-red-900/50 rounded-xl p-3 text-sm focus:outline-none focus:border-red-500 text-stone-100 resize-none shadow-inner"
+                       rows={4}
+                       placeholder="Ketik kelanjutan cerita di sini..."
+                    />
+                    <button 
+                       onClick={submitStory}
+                       disabled={!storyInput.trim() || isSubmitting}
+                       className="w-full bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-xl uppercase tracking-widest text-xs disabled:opacity-50 transition-colors shadow-lg"
+                    >
+                       {isSubmitting ? 'Mengirim...' : 'Submit Cerita'}
+                    </button>
+                 </div>
+              </motion.div>
+           )}
         </div>
-        <h2 className="text-3xl font-black tracking-tight mb-2">Permainan Berlangsung</h2>
-        <p className="text-stone-400 max-w-md">
-          Layar Arena Permainan (Game Board) akan diimplementasikan pada bagian selanjutnya.
-          Status room saat ini telah sukses diubah menjadi &apos;playing&apos;.
-        </p>
+
+        {/* Jika ruang sudah masuk mode voting / menunggu giliran lain */}
+        {room.votingState?.active && (
+           <div className="mt-16 text-center">
+              <span className="inline-block border border-red-900/50 bg-stone-800 text-red-500 px-6 py-4 rounded-xl font-bold uppercase tracking-widest animate-pulse shadow-[0_0_30px_rgba(220,38,38,0.2)]">
+                Menunggu Sesi Voting...
+              </span>
+           </div>
+        )}
       </div>
     );
   }

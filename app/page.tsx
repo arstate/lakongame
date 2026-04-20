@@ -6,6 +6,7 @@ import { signInAnonymously } from 'firebase/auth';
 import { doc, getDoc, setDoc, updateDoc, arrayUnion } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
 import { User, Loader2 } from 'lucide-react';
+import { BACK_CARD_URL, FRONT_URLS } from '@/lib/constants';
 
 export default function Home() {
   const router = useRouter();
@@ -14,6 +15,10 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [userId, setUserId] = useState<string | null>(null);
+
+  // === PRELOAD STATE ===
+  const [imagesLoaded, setImagesLoaded] = useState(false);
+  const [preloadProgress, setPreloadProgress] = useState(0);
 
   // Sign in anonymously saat komponen di-mount
   useEffect(() => {
@@ -29,6 +34,19 @@ export default function Home() {
     signIn();
   }, []);
 
+  if (!imagesLoaded) {
+    return (
+      <div className="min-h-screen bg-stone-950 flex flex-col items-center justify-center text-stone-100 p-6 z-50 overflow-hidden relative">
+        <div className="absolute top-[30%] left-[20%] w-96 h-96 bg-red-900/30 rounded-full blur-[120px] pointer-events-none"></div>
+        <h2 className="text-2xl font-black tracking-widest uppercase mb-6 text-red-500 drop-shadow-md z-10">Menyiapkan Lensa</h2>
+        <div className="w-full max-w-xs h-3 bg-stone-900 rounded-full overflow-hidden border border-stone-800 z-10">
+          <div className="h-full bg-red-600 transition-all duration-300 ease-out" style={{ width: `${preloadProgress}%` }}></div>
+        </div>
+        <p className="mt-4 text-xs font-bold text-stone-500 tracking-widest z-10">{preloadProgress}% - Mengunduh Aset Visual</p>
+      </div>
+    );
+  }
+
   // Fungsi generate 4 huruf acak untuk Room ID
   const generateRoomId = () => {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -38,6 +56,27 @@ export default function Home() {
     }
     return result;
   };
+
+  // Preload Images
+  useEffect(() => {
+    const allUrls = [BACK_CARD_URL, ...FRONT_URLS];
+    let loadedCount = 0;
+
+    const onImageLoaded = () => {
+      loadedCount++;
+      setPreloadProgress(Math.floor((loadedCount / allUrls.length) * 100));
+      if (loadedCount === allUrls.length) {
+        setTimeout(() => setImagesLoaded(true), 600); // 1-tick delay biar mulus transisi UI
+      }
+    };
+
+    allUrls.forEach((url) => {
+      const img = new Image();
+      img.src = url;
+      img.onload = onImageLoaded;
+      img.onerror = onImageLoaded; // agar skip bila 1 gagal terdownload (fallback aman)
+    });
+  }, []);
 
   const createRoom = async () => {
     if (!playerName.trim()) {
