@@ -69,6 +69,59 @@ export default function RoomPage() {
     }
   }, [room?.status, isMyTurn, activeDrawnCard, room?.votingState?.active, room?.deck, roomId]);
 
+  // Auto-Resolution Logic Khusus Host
+  useEffect(() => {
+    if (!room || room.status !== 'playing' || !room.votingState?.active || room.hostId !== userId) return;
+
+    const votes = room.votingState.votes || {};
+    const eligibleVoterCount = Math.max(0, room.players.length - 1);
+    const currentVoteCount = Object.keys(votes).length;
+
+    if (currentVoteCount >= eligibleVoterCount) {
+       let yes = 0; let no = 0;
+       Object.values(votes).forEach(v => v === 'yes' ? yes++ : no++);
+       const isAccepted = yes >= no || eligibleVoterCount === 0; // Jika main sendirian, auto acccept.
+
+       let newPlayers = [...room.players];
+       let newCenterCards = [...room.centerCards];
+
+       if (isAccepted) {
+          newCenterCards.push({
+             card: [room.votingState.card], // Tetap bungkus dalam array untuk format image layout
+             story: room.votingState.story,
+             playerId: room.votingState.playerId,
+             playerName: room.votingState.playerName
+          });
+       } else {
+          // Eliminasi
+          newPlayers = newPlayers.map(p => p.id === room.votingState.playerId ? { ...p, isEliminated: true } : p);
+       }
+
+       // Cari next turn (Lewati yang eliminated)
+       let nextTurnIndex = (room.currentTurnIndex + 1) % room.turnOrder.length;
+       let attempts = 0;
+       while (attempts < room.turnOrder.length) {
+          const tempId = room.turnOrder[nextTurnIndex];
+          const pObj = newPlayers.find(p => p.id === tempId);
+          if (pObj && !pObj.isEliminated) break;
+          nextTurnIndex = (nextTurnIndex + 1) % room.turnOrder.length;
+          attempts++;
+       }
+
+       const activeCount = newPlayers.filter(p => !p.isEliminated).length;
+       const newStatus = activeCount <= 1 ? 'finished' : 'playing';
+
+       const roomRef = doc(db, 'rooms', roomId);
+       updateDoc(roomRef, {
+          players: newPlayers,
+          centerCards: newCenterCards,
+          currentTurnIndex: nextTurnIndex,
+          status: newStatus,
+          votingState: null
+       }).catch(console.error);
+    }
+  }, [room?.votingState, room?.status, room?.players, room?.hostId, room?.currentTurnIndex, room?.turnOrder, room?.centerCards, userId, roomId]);
+
   // Scroll otomatis ke chat terbaru
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -329,6 +382,18 @@ export default function RoomPage() {
     setIsSubmitting(false);
   };
 
+  const castVote = async (voteValue: 'yes' | 'no') => {
+    if (!room || !userId || !room.votingState?.active) return;
+    try {
+       const roomRef = doc(db, 'rooms', roomId);
+       await updateDoc(roomRef, {
+          [`votingState.votes.${userId}`]: voteValue
+       });
+    } catch(err) {
+       console.error("Gagal mengirim vote:", err);
+    }
+  };
+
   // State: Sedang Loading
   if (loading) {
     return (
@@ -429,6 +494,40 @@ export default function RoomPage() {
     );
   }
 
+  // State: Game Over (Finished)
+  if (room && room.status === 'finished') {
+     const winner = room.players.find((p: any) => !p.isEliminated);
+     return (
+       <div className="min-h-screen z-50 bg-stone-950 text-stone-100 flex flex-col items-center justify-center p-6 text-center overflow-hidden relative">
+          <div className="absolute top-[30%] left-[20%] w-[500px] h-[500px] bg-red-900/40 rounded-full blur-[150px] pointer-events-none"></div>
+          <motion.h1 
+             initial={{ scale: 0.5, opacity: 0 }}
+             animate={{ scale: 1, opacity: 1 }}
+             transition={{ type: "spring", bounce: 0.5 }}
+             className="text-6xl md:text-8xl font-black text-red-600 drop-shadow-[0_0_60px_rgba(220,38,38,0.8)] mb-8 tracking-tighter"
+          >
+             GAME OVER
+          </motion.h1>
+          {winner ? (
+             <motion.p initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.5 }} className="text-xl md:text-3xl text-stone-300">
+               Pemenangnya adalah <span className="font-black text-white uppercase tracking-widest">{winner.name}</span>!
+             </motion.p>
+          ) : (
+             <motion.p initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.5 }} className="text-xl md:text-3xl text-stone-300">
+               Semua pemain telah tereliminasi.
+             </motion.p>
+          )}
+          <motion.button 
+             initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 1.5 }}
+             onClick={() => router.push('/')} 
+             className="mt-16 bg-red-600 hover:bg-red-500 text-white font-bold py-4 px-10 rounded-xl uppercase tracking-widest transition-all shadow-[0_0_30px_rgba(220,38,38,0.4)] z-10"
+          >
+             Ke Menu Utama
+          </motion.button>
+       </div>
+     );
+  }
+
   // State: Sedang Bermain (Playing)
   if (room && room.status === 'playing') {
     return (
@@ -507,10 +606,48 @@ export default function RoomPage() {
 
         {/* Jika ruang sudah masuk mode voting / menunggu giliran lain */}
         {room.votingState?.active && (
-           <div className="mt-16 text-center">
-              <span className="inline-block border border-red-900/50 bg-stone-800 text-red-500 px-6 py-4 rounded-xl font-bold uppercase tracking-widest animate-pulse shadow-[0_0_30px_rgba(220,38,38,0.2)]">
-                Menunggu Sesi Voting...
-              </span>
+           <div className="fixed inset-0 z-50 bg-stone-950/90 backdrop-blur-md flex items-center justify-center p-4">
+              <motion.div 
+                 initial={{ scale: 0.9, opacity: 0, y: 20 }}
+                 animate={{ scale: 1, opacity: 1, y: 0 }}
+                 className="bg-stone-900 border border-stone-700/50 rounded-2xl w-full max-w-lg overflow-hidden shadow-[0_0_100px_rgba(0,0,0,1)]"
+              >
+                 <div className="bg-red-900/20 border-b border-red-900/30 px-6 py-4">
+                    <h3 className="text-xl font-black text-white uppercase tracking-widest">Sesi Voting</h3>
+                    <p className="text-red-400 text-xs font-bold uppercase tracking-wider mt-1">{room.votingState.playerName} memainkan kartu ini!</p>
+                 </div>
+                 <div className="p-6 flex flex-col items-center">
+                    <img 
+                       src={room.votingState.card.imageUrl} 
+                       alt="Voting Card" 
+                       className="w-48 aspect-[2/3] object-cover rounded-xl shadow-2xl border-4 border-stone-800 -mt-2 z-10"
+                    />
+                    <div className="bg-stone-800/50 border border-stone-700 w-full mt-6 p-4 rounded-xl text-center italic text-stone-200">
+                       "{room.votingState.story}"
+                    </div>
+
+                    <div className="w-full mt-8">
+                       {room.votingState.playerId === userId ? (
+                          <div className="text-center bg-stone-800 py-4 rounded-xl text-stone-400 font-bold tracking-widest text-sm uppercase animate-pulse border border-stone-700">
+                             Menunggu hasil voting...
+                          </div>
+                       ) : (userId && typeof room.votingState.votes?.[userId] !== 'undefined') ? (
+                          <div className="text-center bg-stone-800 py-4 rounded-xl text-stone-400 font-bold tracking-widest text-sm uppercase border border-stone-700">
+                             Menunggu pemain lain memvoting...
+                          </div>
+                       ) : (
+                          <div className="grid grid-cols-2 gap-4">
+                             <button onClick={() => castVote('no')} className="bg-stone-800 hover:bg-stone-700 text-red-500 border border-red-900/50 font-black py-4 rounded-xl uppercase tracking-widest transition-all">
+                                ❌ Ngga Nyambung
+                             </button>
+                             <button onClick={() => castVote('yes')} className="bg-green-600/20 hover:bg-green-600/30 text-green-500 border border-green-500/30 font-black py-4 rounded-xl uppercase tracking-widest transition-all">
+                                ✅ Nyambung
+                             </button>
+                          </div>
+                       )}
+                    </div>
+                 </div>
+              </motion.div>
            </div>
         )}
       </div>
