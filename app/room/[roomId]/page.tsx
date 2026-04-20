@@ -9,301 +9,93 @@ import { Loader2, Crown, Copy, Check, Play, Users, LogOut, Send, MessageSquare, 
 import { motion } from 'motion/react';
 import { BACK_CARD_URL, FRONT_URLS, CARD_TITLES } from '@/lib/constants';
 
-const AudioPlayer = ({ stream, peerId, onPlayError, playTrigger }: { stream: MediaStream, peerId: string, onPlayError: () => void, playTrigger: number }) => {
-  const audioRef = useRef<HTMLAudioElement>(null);
-  useEffect(() => {
-    if (audioRef.current && stream) {
-      audioRef.current.srcObject = stream;
-      audioRef.current.play().catch(e => {
-        console.error("AutoPlay failed for user", peerId, ":", e);
-        onPlayError();
-      });
-    }
-  }, [stream, peerId, playTrigger, onPlayError]);
-  return <audio ref={audioRef} playsInline className="hidden" />;
-};
+import AgoraRTC, { 
+  AgoraRTCProvider, 
+  useRTCClient, 
+  useJoin, 
+  useLocalMicrophoneTrack, 
+  usePublish, 
+  useRemoteUsers, 
+  useRemoteAudioTracks 
+} from 'agora-rtc-react';
 
-const WebRTCVoiceChat = ({ roomId, userId, players, inGame }: { roomId: string, userId: string, players: any[], inGame: boolean }) => {
-  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
-  const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
+const AGORA_APP_ID = "565e38e7aa3c4d71845a1f0205279df1";
+
+const AgoraVoiceChat = ({ roomId, userId, inGame }: { roomId: string, userId: string, inGame: boolean }) => {
+  const [isJoined, setIsJoined] = useState(false);
   const [micOn, setMicOn] = useState(false);
-  const [errorMsg, setErrorMsg] = useState("");
-  
-  const [isPendingPermission, setIsPendingPermission] = useState(false);
-  const [isInitialized, setIsInitialized] = useState(false);
-  const [needsAudioUnlock, setNeedsAudioUnlock] = useState(false);
-  const [playTrigger, setPlayTrigger] = useState(0);
 
-  const peersRef = useRef<Record<string, RTCPeerConnection>>({});
-  const pendingIceRef = useRef<Record<string, RTCIceCandidateInit[]>>({});
-  
-  const servers = useMemo(() => ({
-    iceServers: [{ 
-      urls: [
-        'stun:stun1.l.google.com:19302', 
-        'stun:stun2.l.google.com:19302'
-      ] 
-    }]
-  }), []);
+  // 1. Join logic
+  useJoin({
+    appid: AGORA_APP_ID,
+    channel: roomId,
+    token: null,
+    uid: userId ? parseInt(userId.slice(-8), 16) % 1000000 : null, // Agora needs numeric UID often, or string if configured, but let's try numeric-ish for safety or just pass string if SDK allows. Actually Agora v4 supports string UIDs.
+  }, isJoined && inGame);
+
+  // 2. Local tracks
+  const { localMicrophoneTrack } = useLocalMicrophoneTrack(micOn);
+  usePublish([localMicrophoneTrack], isJoined && inGame && micOn);
+
+  // 3. Remote tracks
+  const remoteUsers = useRemoteUsers();
+  const { audioTracks } = useRemoteAudioTracks(remoteUsers);
 
   useEffect(() => {
-    if (inGame && !isInitialized && !errorMsg) {
-      setTimeout(() => setIsPendingPermission(true), 0);
-    } else if (!inGame) {
-      setTimeout(() => {
-        setIsPendingPermission(false);
-        setIsInitialized(false);
-        if (localStream) {
-           localStream.getTracks().forEach(t => t.stop());
-           setLocalStream(null);
-        }
-        Object.values(peersRef.current).forEach(pc => pc.close());
-        peersRef.current = {};
-        setRemoteStreams({});
-        pendingIceRef.current = {};
-        setMicOn(false);
-      }, 0);
-    }
-  }, [inGame, isInitialized, errorMsg]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const grantPermissionAndStart = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getAudioTracks().forEach(t => t.enabled = false); 
-      setLocalStream(stream);
-      setIsPendingPermission(false);
-      setIsInitialized(true);
-      unlockAudioDevice();
-    } catch (err) {
-      console.error("Mic permission denied", err);
-      setErrorMsg("Izin mic ditolak. Coba muat ulang & izinkan mikrofon untuk browser ini.");
-      setIsPendingPermission(false);
-      setIsInitialized(true);
-      unlockAudioDevice();
-    }
-  };
-
-  const startListenOnly = () => {
-     setLocalStream(null);
-     setIsPendingPermission(false);
-     setIsInitialized(true);
-     unlockAudioDevice();
-  };
-
-  const unlockAudioDevice = () => {
-    // Memancing HTML5 Audio untuk menyala setelah interaksi pengguna
-    const dummyAudio = new window.Audio();
-    dummyAudio.play().catch(() => {});
-    setNeedsAudioUnlock(false);
-    setPlayTrigger(prev => prev + 1);
-  };
-
-  const setupTracks = (pc: RTCPeerConnection) => {
-     if (localStream) {
-        localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
-     } else {
-        pc.addTransceiver('audio', { direction: 'recvonly' });
-     }
-  };
-
-  const processPendingIce = async (fromId: string, pc: RTCPeerConnection) => {
-     if (pendingIceRef.current[fromId]) {
-        for (const ice of pendingIceRef.current[fromId]) {
-           try {
-              await pc.addIceCandidate(new RTCIceCandidate(ice));
-           } catch (e) {
-              console.warn("Failed to add pending ice", e);
-           }
-        }
-        pendingIceRef.current[fromId] = [];
-     }
-  };
-
-  // Listen to incoming Offers, Answers and ICE Candidates
-  useEffect(() => {
-    if (!isInitialized || !inGame || !userId) return;
-    
-    const signalingRef = collection(db, 'rooms', roomId, 'callSignaling');
-    const q = query(signalingRef, where('to', '==', userId));
-    
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      snapshot.docChanges().forEach(async (change) => {
-        if (change.type === 'added') {
-          const data = change.doc.data();
-          const fromId = data.from;
-          
-          try {
-            if (data.type === 'offer') {
-              if (!peersRef.current[fromId]) {
-                 const pc = new RTCPeerConnection(servers);
-                 peersRef.current[fromId] = pc;
-                 setupTracks(pc);
-                 
-                 pc.onicecandidate = (event) => {
-                   if (event.candidate) {
-                     addDoc(signalingRef, { from: userId, to: fromId, type: 'ice', payload: event.candidate.toJSON(), createdAt: serverTimestamp() });
-                   }
-                 };
-                 
-                 pc.ontrack = (event) => {
-                   setRemoteStreams(prev => ({ ...prev, [fromId]: event.streams[0] }));
-                 };
-                 
-                 await pc.setRemoteDescription(new RTCSessionDescription(data.payload));
-                 const answer = await pc.createAnswer();
-                 await pc.setLocalDescription(answer);
-                 
-                 await addDoc(signalingRef, { from: userId, to: fromId, type: 'answer', payload: { type: answer.type, sdp: answer.sdp }, createdAt: serverTimestamp() });
-                 await processPendingIce(fromId, pc);
-              }
-            } else if (data.type === 'answer') {
-              const pc = peersRef.current[fromId];
-              if (pc && pc.signalingState !== 'stable') {
-                 await pc.setRemoteDescription(new RTCSessionDescription(data.payload));
-                 await processPendingIce(fromId, pc);
-              }
-            } else if (data.type === 'ice') {
-              const pc = peersRef.current[fromId];
-              if (pc && pc.remoteDescription) {
-                 await pc.addIceCandidate(new RTCIceCandidate(data.payload)).catch(e => console.warn(e));
-              } else {
-                 if (!pendingIceRef.current[fromId]) pendingIceRef.current[fromId] = [];
-                 pendingIceRef.current[fromId].push(data.payload);
-              }
-            }
-          } catch (e) {
-            console.error("WebRTC Signaling Error:", e);
-          }
-
-          deleteDoc(change.doc.ref).catch(() => {});
-        }
-      });
+    audioTracks.forEach(track => {
+      track.play();
     });
-    
-    return () => unsubscribe();
-  }, [isInitialized, inGame, roomId, userId, localStream, servers]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [audioTracks]);
 
-  // Send offers to new players
-  useEffect(() => {
-    if (!isInitialized || !inGame || !userId) return;
-    
-    const signalingRef = collection(db, 'rooms', roomId, 'callSignaling');
-    
-    players.forEach(async (p: any) => {
-      const peerId = p.id;
-      if (peerId !== userId && userId > peerId && !peersRef.current[peerId]) {
-        const pc = new RTCPeerConnection(servers);
-        peersRef.current[peerId] = pc;
-        setupTracks(pc);
-        
-        pc.onicecandidate = (event) => {
-          if (event.candidate) {
-            addDoc(signalingRef, { from: userId, to: peerId, type: 'ice', payload: event.candidate.toJSON(), createdAt: serverTimestamp() });
-          }
-        };
-        
-        pc.ontrack = (event) => {
-          setRemoteStreams(prev => ({ ...prev, [peerId]: event.streams[0] }));
-        };
-        
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        
-        await addDoc(signalingRef, { from: userId, to: peerId, type: 'offer', payload: { type: offer.type, sdp: offer.sdp }, createdAt: serverTimestamp() });
-      }
-    });
-  }, [players, isInitialized, inGame, roomId, userId, localStream, servers]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  
-  useEffect(() => {
-    return () => {
-      Object.values(peersRef.current).forEach(pc => pc.close());
-      peersRef.current = {};
-      setRemoteStreams({});
-    };
-  }, [inGame]);
-
+  // Mic toggle handler
   const toggleMic = () => {
-    if (localStream) {
-      const enabled = !micOn;
-      localStream.getAudioTracks().forEach(t => t.enabled = enabled);
-      setMicOn(enabled);
-    }
+    setMicOn(!micOn);
   };
 
   if (!inGame) return null;
 
   return (
     <>
-      {isPendingPermission && (
+      {!isJoined && (
          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-stone-900/80 backdrop-blur-sm p-4">
            <div className="bg-stone-800 border border-stone-700 rounded-2xl p-6 md:p-8 max-w-sm w-full text-center shadow-2xl relative">
-             <div className="w-16 h-16 bg-red-600/20 text-red-500 flex items-center justify-center rounded-full mx-auto mb-4">
-                <Mic className="w-8 h-8" />
+             <div className="w-16 h-16 bg-blue-600/20 text-blue-500 flex items-center justify-center rounded-full mx-auto mb-4">
+                <Volume2 className="w-8 h-8" />
              </div>
-             <h3 className="text-xl font-black text-white mb-2 uppercase tracking-widest">Voice Chat</h3>
+             <h3 className="text-xl font-black text-white mb-2 uppercase tracking-widest">Voice Chat Aktif</h3>
              <p className="text-sm text-stone-400 mb-6 font-medium">
-               Klik tombol di bawah untuk bergabung ke percakapan suara real-time. (Wajib klik untuk pengguna iOS/Safari).
+               Klik tombol di bawah untuk mengaktifkan suara bersama pemain lain. (Wajib untuk iOS).
              </p>
              <button 
-                onClick={grantPermissionAndStart}
-                className="w-full bg-red-600 hover:bg-red-500 text-white font-black py-4 rounded-xl uppercase tracking-widest text-sm transition-all shadow-[0_0_20px_rgba(220,38,38,0.4)] active:scale-95"
+                onClick={() => { setIsJoined(true); setMicOn(true); }}
+                className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black py-4 rounded-xl uppercase tracking-widest text-sm transition-all shadow-[0_0_20px_rgba(37,99,235,0.4)] active:scale-95"
              >
-                Gabung Voice Chat (Wajib klik untuk iOS)
+                Aktifkan Voice Chat
              </button>
              <button 
-                onClick={startListenOnly}
+                onClick={() => setIsJoined(true)}
                 className="w-full bg-transparent hover:bg-stone-700 text-stone-500 font-bold py-3 mt-4 rounded-xl uppercase tracking-widest text-[10px] transition-colors"
              >
-                Cuma Dengerin (Pemain Bisu)
+                Gabung (Mute Awal)
              </button>
            </div>
          </div>
       )}
 
-      {needsAudioUnlock && (
-         <div className="fixed bottom-24 right-6 z-[60] pointer-events-auto">
-           <button 
-             onClick={unlockAudioDevice}
-             className="bg-blue-600 animate-bounce hover:bg-blue-500 text-white shadow-[0_0_20px_rgba(37,99,235,0.6)] px-5 py-4 border border-blue-400 rounded-full font-black text-sm flex items-center gap-2 uppercase tracking-widest"
-           >
-             <VolumeX className="w-5 h-5 text-yellow-300" />
-             Ketuk untuk Putar Suara!
-           </button>
-         </div>
-      )}
-
-      <div className="fixed bottom-6 right-6 z-[60] flex flex-col items-end gap-3 pointer-events-none">
-         {Object.entries(remoteStreams).map(([peerId, stream]) => (
-           <AudioPlayer 
-             key={peerId} 
-             peerId={peerId} 
-             stream={stream} 
-             playTrigger={playTrigger}
-             onPlayError={() => setNeedsAudioUnlock(true)}
-           />
-         ))}
-         {errorMsg && (
-           <div className="bg-red-950/95 text-red-100 text-[10px] uppercase font-bold tracking-widest px-4 py-2 rounded-lg border border-red-500/50 shadow-2xl pointer-events-auto max-w-[200px] text-center mb-2">
-             {errorMsg}
-           </div>
-         )}
-         {isInitialized && !errorMsg && (
+      {isJoined && (
+         <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-3 pointer-events-auto">
             <button 
               onClick={toggleMic}
-              className={`p-5 rounded-full shadow-2xl transition-all flex items-center justify-center pointer-events-auto group relative ${micOn ? 'bg-green-600 hover:bg-green-500 text-white' : 'bg-stone-800 hover:bg-stone-700 text-red-500 border border-stone-700'}`}
-              title={micOn ? "Matikan Mic" : "Nyalakan Mic"}
+              className={`p-5 rounded-full shadow-2xl transition-all flex items-center justify-center group relative ${micOn ? 'bg-green-600 hover:bg-green-500 text-white shadow-[0_0_20px_rgba(22,163,74,0.4)]' : 'bg-red-600 hover:bg-red-500 text-white shadow-[0_0_20px_rgba(220,38,38,0.4)]'}`}
+              title={micOn ? "Mute Mic" : "Unmute Mic"}
             >
               {micOn && (
                 <span className="absolute inset-0 rounded-full bg-green-500 animate-ping opacity-25"></span>
               )}
-              {micOn && (
-                <span className="absolute -inset-1 rounded-full border-2 border-green-500/30 animate-pulse"></span>
-              )}
               {micOn ? <Mic className="w-7 h-7 relative z-10" /> : <MicOff className="w-7 h-7 relative z-10" />}
             </button>
-         )}
-      </div>
+         </div>
+      )}
     </>
   );
 };
@@ -374,6 +166,8 @@ export default function RoomPage() {
   const router = useRouter();
   const roomId = params.roomId as string;
   
+  const agoraClient = useRTCClient(AgoraRTC.createClient({ mode: "rtc", codec: "vp8" }));
+
   const [userId, setUserId] = useState<string | null>(null);
   const [room, setRoom] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -1146,7 +940,8 @@ export default function RoomPage() {
   const playerCount = room.players.length;
 
   return (
-    <div className="min-h-screen w-full bg-stone-900 text-stone-100 font-sans flex items-center justify-center overflow-hidden relative">
+    <AgoraRTCProvider client={agoraClient}>
+      <div className="min-h-screen w-full bg-stone-900 text-stone-100 font-sans flex items-center justify-center overflow-hidden relative">
       {/* Decorative Background */}
       <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
         <div className="absolute top-[20%] left-[10%] w-96 h-96 bg-red-800 rounded-full blur-[150px]"></div>
@@ -1262,9 +1057,10 @@ export default function RoomPage() {
         </div>
 
         {userId && (
-           <WebRTCVoiceChat roomId={roomId} userId={userId} players={room.players} inGame={room?.status === 'waiting' || room?.status === 'playing' || room?.status === 'intro'} />
+           <AgoraVoiceChat roomId={roomId} userId={userId} inGame={room?.status === 'waiting' || room?.status === 'playing' || room?.status === 'intro'} />
         )}
       </div>
     </div>
+    </AgoraRTCProvider>
   );
 }
