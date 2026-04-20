@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { doc, onSnapshot, updateDoc, collection, query, orderBy, addDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, onSnapshot, updateDoc, collection, query, orderBy, addDoc, serverTimestamp, deleteDoc } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from '@/lib/firebase';
 import { Loader2, Crown, Copy, Check, Play, Users, LogOut, Send, MessageSquare } from 'lucide-react';
@@ -207,8 +207,11 @@ export default function RoomPage() {
       // Bersifat "Best Effort"
       const remainingPlayers = room.players.filter((p: any) => p.id !== userId);
       const roomRef = doc(db, 'rooms', roomId);
-      // Panggil update (tanpa await agar sinkron sebelum browser kill process)
-      updateDoc(roomRef, { players: remainingPlayers });
+      if (remainingPlayers.length === 0) {
+        deleteDoc(roomRef);
+      } else {
+        updateDoc(roomRef, { players: remainingPlayers });
+      }
     };
 
     window.addEventListener('beforeunload', handleBeforeUnload);
@@ -283,7 +286,7 @@ export default function RoomPage() {
       const roomRef = doc(db, 'rooms', roomId);
       
       if (remainingPlayers.length === 0) {
-        await updateDoc(roomRef, { status: 'finished' });
+        await deleteDoc(roomRef);
       } else {
         await updateDoc(roomRef, { players: remainingPlayers });
       }
@@ -324,12 +327,18 @@ export default function RoomPage() {
   // 3. Fungsi Memulai Game (Intro Trigger)
   const startGame = async () => {
     if (!room || room.hostId !== userId) return;
+    if (room.players.length < 3) {
+      setError("Minimal 3 pemain untuk memulai.");
+      setTimeout(() => setError(''), 3000);
+      return;
+    }
     try {
       const roomRef = doc(db, 'rooms', roomId);
       await updateDoc(roomRef, { status: 'intro' });
     } catch (err) {
       console.error("Gagal memulai intro:", err);
       setError("Gagal memulai game.");
+      setTimeout(() => setError(''), 3000);
     }
   };
 
@@ -416,6 +425,55 @@ export default function RoomPage() {
       </div>
     );
   }
+
+  // === KOMPONEN CHAT ===
+  const renderChatBox = () => (
+    <div className="flex flex-col h-[500px] bg-stone-800/50 backdrop-blur-md rounded-2xl border border-stone-700 shadow-2xl relative overflow-hidden flex-1 w-full max-w-sm ml-auto">
+      <div className="px-5 py-4 border-b border-stone-700/50 flex items-center gap-2 bg-stone-800/80 shrink-0">
+        <MessageSquare className="w-4 h-4 text-stone-400" />
+        <h2 className="text-xs font-bold text-stone-400 tracking-widest uppercase">Live Chat</h2>
+      </div>
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 flex flex-col">
+        {messages.length === 0 ? (
+          <div className="m-auto text-stone-500 text-sm flex flex-col items-center gap-3 text-center">
+            <MessageSquare className="w-10 h-10 opacity-20" />
+            <p>Belum ada pesan.<br/>Sapa pemain lain yuk!</p>
+          </div>
+        ) : (
+          messages.map((msg) => {
+            const isMe = msg.senderId === userId;
+            return (
+              <div key={msg.id} className={`flex flex-col max-w-[85%] ${isMe ? 'self-end items-end' : 'self-start items-start'}`}>
+                <span className="text-[10px] text-stone-500 mb-1 ml-1 font-medium tracking-wide">
+                  {isMe ? 'Kamu' : msg.senderName}
+                </span>
+                <div className={`px-4 py-2 rounded-2xl text-sm ${isMe ? 'bg-red-600 text-white rounded-tr-sm' : 'bg-stone-700 text-stone-200 rounded-tl-sm'}`}>
+                  {msg.text}
+                </div>
+              </div>
+            );
+          })
+        )}
+        <div ref={messagesEndRef} />
+      </div>
+      <form onSubmit={handleSendMessage} className="p-3 border-t border-stone-700/50 bg-stone-800/80 flex gap-2 shrink-0">
+        <input
+          type="text"
+          value={newMessage}
+          onChange={(e) => setNewMessage(e.target.value)}
+          placeholder="Ketik pesan..."
+          className="flex-1 bg-stone-900 text-sm border border-stone-700 rounded-xl px-4 py-2.5 text-stone-100 placeholder:text-stone-500 focus:outline-none focus:border-red-500/50 transition-colors"
+        />
+        <button 
+          type="submit" 
+          disabled={!newMessage.trim()}
+          className="bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:hover:bg-red-600 text-white px-4 py-2.5 rounded-xl transition-all flex items-center justify-center shrink-0"
+        >
+          <Send className="w-4 h-4" />
+        </button>
+      </form>
+    </div>
+  );
 
   // State: Error
   if (error) {
@@ -548,91 +606,103 @@ export default function RoomPage() {
       <div className="min-h-screen bg-stone-900 text-stone-100 p-6 md:p-12 font-sans overflow-x-hidden overflow-y-auto w-full relative">
         <h2 className="text-3xl font-black mb-4 text-center tracking-widest text-red-500 uppercase">Arena Bermain</h2>
 
-        {/* Daftar Pemain Aktif / Eliminasi */}
-        <div className="flex flex-wrap items-center justify-center gap-3 w-full max-w-4xl mx-auto mb-10">
-           {room.players.map((player: any) => {
-              const isTurn = room.turnOrder[room.currentTurnIndex] === player.id;
-              const isDead = player.isEliminated;
-              return (
-                <div key={player.id} className={`flex items-center gap-2 px-4 py-2 rounded-full border transition-all duration-300 ${isTurn ? 'border-red-500 bg-red-900/30 ring-2 ring-red-500/50' : 'border-stone-700 bg-stone-800'} ${isDead ? 'opacity-40 grayscale border-stone-800' : ''}`}>
-                   <span className="text-sm font-bold flex items-center gap-2">
-                       {isDead ? '💀' : '😁'} 
-                       <span className={isDead ? 'line-through text-stone-500' : 'text-stone-200'}>{player.name} {player.id === userId && '(Kamu)'}</span>
-                   </span>
-                   {isTurn && !isDead && <span className="flex h-2.5 w-2.5 rounded-full bg-red-500 animate-ping"></span>}
-                </div>
-              )
-           })}
-        </div>
+        <div className="flex flex-col md:flex-row gap-6 max-w-7xl mx-auto w-full items-start">
+           
+           {/* KIRI - ARENA PERMAINAN PUSAT */}
+           <div className="flex-1 w-full flex flex-col items-center">
+              {/* Daftar Pemain Aktif / Eliminasi */}
+              <div className="flex flex-wrap items-center justify-center gap-3 w-full mb-10">
+                 {room.players.map((player: any) => {
+                    const isTurn = room.turnOrder[room.currentTurnIndex] === player.id;
+                    const isDead = player.isEliminated;
+                    return (
+                      <div key={player.id} className={`flex items-center gap-2 px-4 py-2 rounded-full border transition-all duration-300 ${isTurn ? 'border-red-500 bg-red-900/30 ring-2 ring-red-500/50' : 'border-stone-700 bg-stone-800'} ${isDead ? 'opacity-40 grayscale border-stone-800' : ''}`}>
+                         <span className="text-sm font-bold flex items-center gap-2">
+                             {isDead ? '💀' : '😁'} 
+                             <span className={isDead ? 'line-through text-stone-500' : 'text-stone-200'}>{player.name} {player.id === userId && '(Kamu)'}</span>
+                         </span>
+                         {isTurn && !isDead && <span className="flex h-2.5 w-2.5 rounded-full bg-red-500 animate-ping"></span>}
+                      </div>
+                    )
+                 })}
+              </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-6 max-w-6xl mx-auto items-start w-full">
-           {/* 1. Gambar Tumpukan Kartu Deck */}
-           <div className="flex flex-col items-center">
-              <motion.img 
-                 src={BACK_CARD_URL} 
-                 alt="Tumpukan Deck"
-                 className="w-full aspect-[2/3] object-cover rounded-xl shadow-[0_0_20px_rgba(0,0,0,0.6)] border-2 border-stone-800"
-              />
-              <span className="mt-3 text-xs font-bold text-stone-500 bg-stone-800 px-3 py-1 rounded-full uppercase tracking-widest">
-                 Sisa Deck: {room.deck?.length || 0}
-              </span>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-6 items-start w-full max-w-4xl">
+                 {/* 1. Gambar Tumpukan Kartu Deck */}
+                 <div className="flex flex-col items-center">
+                    <motion.img 
+                       src={BACK_CARD_URL} 
+                       alt="Tumpukan Deck"
+                       className="w-full aspect-[2/3] object-cover rounded-xl shadow-[0_0_20px_rgba(0,0,0,0.6)] border-2 border-stone-800"
+                    />
+                    <span className="mt-3 text-xs font-bold text-stone-500 bg-stone-800 px-3 py-1 rounded-full uppercase tracking-widest">
+                       Sisa Deck: {room.deck?.length || 0}
+                    </span>
+                 </div>
+
+                 {/* 2 & 3 & seterusnya... Render Kartu Center/Meja */}
+                 {room.centerCards?.map((cCard: any, idx: number) => (
+                    <motion.div 
+                       key={`center-${idx}`}
+                       initial={{ rotateY: -180, opacity: 0 }}
+                       animate={{ rotateY: 0, opacity: 1 }}
+                       transition={{ duration: 0.6, type: "spring", bounce: 0.3 }}
+                       style={{ transformStyle: "preserve-3d", perspective: 1200 }}
+                       className="flex flex-col items-center gap-3 w-full"
+                    >
+                       <img 
+                          src={cCard.card[0].imageUrl} 
+                          alt={`Kartu Center ${idx + 1}`}
+                          className="w-full aspect-[2/3] object-cover rounded-xl shadow-[0_0_20px_rgba(220,38,38,0.2)] border-2 border-stone-700"
+                       />
+                       <div className="bg-stone-800/80 backdrop-blur border border-stone-700 p-3 rounded-lg w-full text-sm text-center italic text-stone-300">
+                          "{cCard.story}"
+                          <div className="mt-2 text-[10px] text-red-400 font-bold tracking-wider not-italic uppercase">- {cCard.playerName}</div>
+                       </div>
+                    </motion.div>
+                 ))}
+
+                 {/* Grid Tambahan Khusus User Yang Sedang Gilirannya (Jika dia memegang local activeDrawnCard) */}
+                 {activeDrawnCard && isMyTurn && !room.votingState?.active && (
+                    <motion.div 
+                       initial={{ scale: 0.8, opacity: 0, y: 50 }}
+                       animate={{ scale: 1, opacity: 1, y: 0 }}
+                       className="flex flex-col items-center gap-3 col-span-2 md:col-span-1 w-full"
+                    >
+                       <img 
+                          src={activeDrawnCard.imageUrl}
+                          alt="Kartu Di Tangan"
+                          className="w-[80%] md:w-full aspect-[2/3] object-cover rounded-xl shadow-[0_0_40px_rgba(220,38,38,0.4)] border-2 border-red-500"
+                       />
+                       <div className="w-full flex-col flex gap-2">
+                          <label className="text-[10px] text-stone-400 font-bold uppercase tracking-widest text-center mt-2">
+                             Cerita harus nyambung dari awal mula kartu!
+                          </label>
+                          <textarea 
+                             value={storyInput}
+                             onChange={e => setStoryInput(e.target.value)}
+                             className="w-full bg-stone-950 border border-red-900/50 rounded-xl p-3 text-sm focus:outline-none focus:border-red-500 text-stone-100 resize-none shadow-inner"
+                             rows={4}
+                             placeholder="Ketik kelanjutan cerita di sini..."
+                          />
+                          <button 
+                             onClick={submitStory}
+                             disabled={!storyInput.trim() || isSubmitting}
+                             className="w-full bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-xl uppercase tracking-widest text-xs disabled:opacity-50 transition-colors shadow-lg"
+                          >
+                             {isSubmitting ? 'Mengirim...' : 'Submit Cerita'}
+                          </button>
+                       </div>
+                    </motion.div>
+                 )}
+              </div>
            </div>
 
-           {/* 2 & 3 & seterusnya... Render Kartu Center/Meja */}
-           {room.centerCards?.map((cCard: any, idx: number) => (
-              <motion.div 
-                 key={`center-${idx}`}
-                 initial={{ rotateY: -180, opacity: 0 }}
-                 animate={{ rotateY: 0, opacity: 1 }}
-                 transition={{ duration: 0.6, type: "spring", bounce: 0.3 }}
-                 style={{ transformStyle: "preserve-3d", perspective: 1200 }}
-                 className="flex flex-col items-center gap-3 w-full"
-              >
-                 <img 
-                    src={cCard.card[0].imageUrl} 
-                    alt={`Kartu Center ${idx + 1}`}
-                    className="w-full aspect-[2/3] object-cover rounded-xl shadow-[0_0_20px_rgba(220,38,38,0.2)] border-2 border-stone-700"
-                 />
-                 <div className="bg-stone-800/80 backdrop-blur border border-stone-700 p-3 rounded-lg w-full text-sm text-center italic text-stone-300">
-                    "{cCard.story}"
-                    <div className="mt-2 text-[10px] text-red-400 font-bold tracking-wider not-italic uppercase">- {cCard.playerName}</div>
-                 </div>
-              </motion.div>
-           ))}
+           {/* KANAN - LIVE CHAT */}
+           <div className="w-full md:w-80 lg:w-96 shrink-0 mt-10 md:mt-0 flex flex-col relative h-[500px]">
+              {renderChatBox()}
+           </div>
 
-           {/* Grid Tambahan Khusus User Yang Sedang Gilirannya (Jika dia memegang local activeDrawnCard) */}
-           {activeDrawnCard && isMyTurn && !room.votingState?.active && (
-              <motion.div 
-                 initial={{ scale: 0.8, opacity: 0, y: 50 }}
-                 animate={{ scale: 1, opacity: 1, y: 0 }}
-                 className="flex flex-col items-center gap-3 col-span-2 md:col-span-1 w-full"
-              >
-                 <img 
-                    src={activeDrawnCard.imageUrl}
-                    alt="Kartu Di Tangan"
-                    className="w-[80%] md:w-full aspect-[2/3] object-cover rounded-xl shadow-[0_0_40px_rgba(220,38,38,0.4)] border-2 border-red-500"
-                 />
-                 <div className="w-full flex-col flex gap-2">
-                    <label className="text-[10px] text-stone-400 font-bold uppercase tracking-widest text-center mt-2">
-                       Cerita harus nyambung dari awal mula kartu!
-                    </label>
-                    <textarea 
-                       value={storyInput}
-                       onChange={e => setStoryInput(e.target.value)}
-                       className="w-full bg-stone-950 border border-red-900/50 rounded-xl p-3 text-sm focus:outline-none focus:border-red-500 text-stone-100 resize-none shadow-inner"
-                       rows={4}
-                       placeholder="Ketik kelanjutan cerita di sini..."
-                    />
-                    <button 
-                       onClick={submitStory}
-                       disabled={!storyInput.trim() || isSubmitting}
-                       className="w-full bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-xl uppercase tracking-widest text-xs disabled:opacity-50 transition-colors shadow-lg"
-                    >
-                       {isSubmitting ? 'Mengirim...' : 'Submit Cerita'}
-                    </button>
-                 </div>
-              </motion.div>
-           )}
         </div>
 
         {/* Jika ruang sudah masuk mode voting / menunggu giliran lain */}
@@ -752,7 +822,7 @@ export default function RoomPage() {
               <Users className="w-4 h-4" /> Daftar Pemain
             </h2>
             <span className="text-xs font-bold text-stone-500 bg-stone-900 px-3 py-1 rounded">
-              {playerCount} / 4 MAX
+              {playerCount} / 6 MAX
             </span>
           </div>
 
@@ -789,7 +859,7 @@ export default function RoomPage() {
             })}
 
             {/* Empty Slots */}
-            {Array.from({ length: Math.max(0, 4 - playerCount) }).map((_, i) => (
+            {Array.from({ length: Math.max(0, 6 - playerCount) }).map((_, i) => (
               <div 
                 key={`empty-${i}`} 
                 className="flex items-center justify-between p-4 rounded-xl border border-stone-800 border-dashed opacity-50 bg-stone-900/10"
@@ -831,54 +901,8 @@ export default function RoomPage() {
           </div>
 
           {/* KOLOM KANAN: LIVE CHAT */}
-          <div className="md:col-span-5 flex flex-col h-[500px] bg-stone-800/50 backdrop-blur-md rounded-2xl border border-stone-700 shadow-2xl relative overflow-hidden">
-            <div className="px-5 py-4 border-b border-stone-700/50 flex items-center gap-2 bg-stone-800/80">
-              <MessageSquare className="w-4 h-4 text-stone-400" />
-              <h2 className="text-xs font-bold text-stone-400 tracking-widest uppercase">Live Chat</h2>
-            </div>
-
-            {/* AREA PESAN */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 flex flex-col">
-              {messages.length === 0 ? (
-                <div className="m-auto text-stone-500 text-sm flex flex-col items-center gap-3 text-center">
-                  <MessageSquare className="w-10 h-10 opacity-20" />
-                  <p>Belum ada pesan.<br/>Sapa pemain lain yuk!</p>
-                </div>
-              ) : (
-                messages.map((msg) => {
-                  const isMe = msg.senderId === userId;
-                  return (
-                    <div key={msg.id} className={`flex flex-col max-w-[85%] ${isMe ? 'self-end items-end' : 'self-start items-start'}`}>
-                      <span className="text-[10px] text-stone-500 mb-1 ml-1 font-medium tracking-wide">
-                        {isMe ? 'Kamu' : msg.senderName}
-                      </span>
-                      <div className={`px-4 py-2 rounded-2xl text-sm ${isMe ? 'bg-red-600 text-white rounded-tr-sm' : 'bg-stone-700 text-stone-200 rounded-tl-sm'}`}>
-                        {msg.text}
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-              <div ref={messagesEndRef} />
-            </div>
-
-            {/* INPUT FORM */}
-            <form onSubmit={handleSendMessage} className="p-3 border-t border-stone-700/50 bg-stone-800/80 flex gap-2">
-              <input
-                type="text"
-                value={newMessage}
-                onChange={(e) => setNewMessage(e.target.value)}
-                placeholder="Ketik pesan..."
-                className="flex-1 bg-stone-900 text-sm border border-stone-700 rounded-xl px-4 py-2.5 text-stone-100 placeholder:text-stone-500 focus:outline-none focus:border-red-500/50 transition-colors"
-              />
-              <button 
-                type="submit" 
-                disabled={!newMessage.trim()}
-                className="bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:hover:bg-red-600 text-white px-4 py-2.5 rounded-xl transition-all flex items-center justify-center shrink-0"
-              >
-                <Send className="w-4 h-4" />
-              </button>
-            </form>
+          <div className="md:col-span-5 flex flex-col h-[500px]">
+             {renderChatBox()}
           </div>
         </div>
 
