@@ -222,17 +222,7 @@ export default function RoomPage() {
   const router = useRouter();
   const roomId = params.roomId as string;
   
-  // Agora client should only be created on the client side to avoid SSR errors
-  const [agoraClientInstance, setAgoraClientInstance] = useState<any>(null);
-  
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
-      setAgoraClientInstance(client);
-    }
-  }, []);
-
-  const agoraClient = useRTCClient(agoraClientInstance);
+  const agoraClient = useRTCClient(AgoraRTC.createClient({ mode: "rtc", codec: "vp8" }));
   const [isVoiceJoined, setIsVoiceJoined] = useState(false);
   const [isMicOn, setIsMicOn] = useState(false);
 
@@ -629,6 +619,15 @@ export default function RoomPage() {
     }
   };
 
+  // State: Sedang Loading
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-stone-900 flex items-center justify-center text-red-500">
+        <Loader2 className="w-12 h-12 animate-spin" />
+      </div>
+    );
+  }
+
   // === KOMPONEN CHAT ===
   const renderChatBox = () => (
     <div className="flex flex-col h-[500px] bg-stone-800/50 backdrop-blur-md rounded-2xl border border-stone-700 shadow-2xl relative overflow-hidden flex-1 w-full max-w-sm ml-auto">
@@ -678,289 +677,456 @@ export default function RoomPage() {
     </div>
   );
 
-  // === RENDER HELPERS ===
-  const renderLobby = () => {
-    const isHost = room?.hostId === userId;
-    const playerCount = room?.players?.length || 0;
-
+  // State: Error
+  if (error) {
     return (
-      <div className="min-h-screen w-full bg-stone-900 text-stone-100 font-sans flex items-center justify-center overflow-hidden relative">
-        <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
-          <div className="absolute top-[20%] left-[10%] w-96 h-96 bg-red-800 rounded-full blur-[150px]"></div>
-        </div>
-
-        <div className="z-10 w-full max-w-5xl px-4 md:px-6 py-10 md:py-0 h-screen overflow-y-auto md:h-auto md:overflow-visible flex flex-col justify-start md:justify-center">
-          <div className="text-center mb-10">
-            <div className="inline-flex items-center justify-center px-4 py-1.5 bg-stone-800 border border-stone-700 rounded-full mb-6">
-              <span className="text-xs font-bold tracking-widest text-stone-400 uppercase mr-3">Kode Room</span>
-              <div className="flex items-center gap-3">
-                <span className="text-xl font-mono font-black text-red-500 tracking-[0.2em]">{roomId}</span>
-                <button 
-                  onClick={handleCopy}
-                  className="text-stone-400 hover:text-stone-100 transition-colors bg-stone-700/50 p-1.5 rounded-md"
-                  title="Copy Kode"
-                >
-                  {copied ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
-                </button>
-              </div>
-            </div>
-            <h1 className="text-4xl font-black tracking-tighter uppercase">Lobi Permainan</h1>
-            <p className="text-stone-400 text-sm mt-2">Pemain sedang berkumpul. Siapkan strategi Anda.</p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-6 w-full pb-10 md:pb-0">
-            <div className="md:col-span-7 flex flex-col gap-6">
-              {room && (
-                <div className="bg-stone-800/50 backdrop-blur-md rounded-2xl border border-stone-700 p-6 shadow-2xl">
-                  <div className="flex items-center justify-between mb-6 border-b border-stone-700 pb-4">
-                    <h2 className="text-xs font-bold text-stone-500 tracking-widest uppercase flex items-center gap-2">
-                      <Users className="w-4 h-4" /> Daftar Pemain
-                    </h2>
-                    <span className="text-xs font-bold text-stone-500 bg-stone-900 px-3 py-1 rounded">
-                      {playerCount} / 6 MAX
-                    </span>
-                  </div>
-                  <div className="space-y-3">
-                    {room.players.map((player: any) => (
-                      <div key={player.id} className={`flex items-center justify-between p-4 rounded-xl border transition-all ${player.id === userId ? 'bg-stone-700/30 border-stone-600' : 'bg-stone-900/50 border-stone-800'}`}>
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-stone-700 border-2 border-stone-600 flex items-center justify-center">
-                            <span className="text-xs font-bold text-stone-400">{player.name.charAt(0).toUpperCase()}</span>
-                          </div>
-                          <span className={`font-semibold ${player.id === userId ? 'text-white' : 'text-stone-300'}`}>
-                            {player.name} {player.id === userId && <span className="text-stone-500 text-xs font-normal ml-2">(Kamu)</span>}
-                          </span>
-                        </div>
-                        {player.id === room?.hostId && (
-                          <div className="flex items-center gap-1.5 bg-red-600/10 text-red-500 px-3 py-1 rounded text-xs font-bold tracking-widest uppercase border border-red-500/20">
-                            <Crown className="w-3.5 h-3.5" /> Host
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="text-center bg-stone-800/30 p-6 rounded-2xl border border-stone-700/50">
-                {isHost ? (
-                  <button onClick={startGame} className="w-full sm:w-auto bg-red-600 hover:bg-red-700 text-white font-bold tracking-wider uppercase px-12 py-4 rounded-xl transition-all flex items-center justify-center gap-3 mx-auto">
-                    <Play className="w-5 h-5 fill-current" /> Mulai Game
-                  </button>
-                ) : (
-                  <div className="inline-flex items-center gap-2 text-stone-500 text-sm font-medium tracking-wide bg-stone-900/50 px-6 py-3 rounded-full border border-stone-700">
-                    <Loader2 className="w-4 h-4 animate-spin text-red-600" /> Menunggu Host...
-                  </div>
-                )}
-                <button onClick={handleLeaveRoom} className="mt-5 flex items-center justify-center gap-2 w-full max-w-[200px] mx-auto text-stone-500 hover:text-red-500 transition-colors text-xs uppercase tracking-widest font-bold">
-                  <LogOut className="w-4 h-4" /> Keluar dari Lobi
-                </button>
-              </div>
-            </div>
-            <div className="md:col-span-5 flex flex-col h-[500px]">
-               {renderChatBox()}
-            </div>
-          </div>
+      <div className="min-h-screen bg-stone-900 flex flex-col items-center justify-center p-8 text-center text-stone-100">
+        <div className="bg-stone-800 p-8 rounded-2xl border border-red-900/50 max-w-md">
+          <p className="text-red-400 mb-6">{error}</p>
+          <button onClick={() => router.push('/')} className="bg-stone-700 px-6 py-2 rounded-lg hover:bg-stone-600">
+            Kembali ke Beranda
+          </button>
         </div>
       </div>
     );
-  };
+  }
 
-  const renderIntro = () => {
+  // State: Sedang Intro Animasi
+  if (room && room.status === 'intro') {
     return (
       <div className="fixed inset-0 z-50 bg-stone-950 flex flex-col items-center justify-center text-stone-100 overflow-hidden font-sans">
+        
         {introPhase === 'shuffling_players' && (
           <motion.div initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} className="flex flex-col items-center gap-6">
             <Users className="w-20 h-20 text-red-500 animate-pulse" />
             <h2 className="text-2xl md:text-3xl font-black tracking-widest uppercase text-stone-300 text-center">Mengacak Urutan Pemain...</h2>
           </motion.div>
         )}
+
         {introPhase === 'showing_players' && (
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col w-full max-w-lg px-6 gap-4">
             <h2 className="text-xl md:text-2xl font-bold tracking-widest uppercase text-center text-stone-400 mb-6">Urutan Bermain</h2>
             {localTurnOrder.map((player, idx) => (
-              <motion.div key={player.id} initial={{ opacity: 0, x: -50 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: idx * 0.3 }} className="flex items-center gap-4 bg-stone-800 p-4 rounded-xl border border-stone-700">
-                <div className="w-10 h-10 rounded-full bg-red-600 flex items-center justify-center font-black text-xl shadow-lg shrink-0">{idx + 1}</div>
-                <span className="text-xl font-bold truncate">{player.name} {player.id === userId && <span className="text-stone-500 text-sm ml-2">(Kamu)</span>}</span>
+              <motion.div 
+                 key={player.id}
+                 initial={{ opacity: 0, x: -50 }}
+                 animate={{ opacity: 1, x: 0 }}
+                 transition={{ delay: idx * 0.3 }}
+                 className="flex items-center gap-4 bg-stone-800 p-4 rounded-xl border border-stone-700"
+              >
+                 <div className="w-10 h-10 rounded-full bg-red-600 flex items-center justify-center font-black text-xl shadow-lg shrink-0">
+                    {idx + 1}
+                 </div>
+                 <span className="text-xl font-bold truncate">{player.name} {player.id === userId && <span className="text-stone-500 text-sm ml-2">(Kamu)</span>}</span>
               </motion.div>
             ))}
           </motion.div>
         )}
+
         {introPhase === 'shuffling_cards' && (
           <motion.div initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} className="flex flex-col items-center gap-8">
             <ShuffleAnimation />
             <h2 className="text-2xl md:text-3xl font-black tracking-widest uppercase text-stone-300 mt-4 text-center">Mengacak Kartu...</h2>
           </motion.div>
         )}
+
         {['countdown_3', 'countdown_2', 'countdown_1'].includes(introPhase) && (
-          <motion.div key={introPhase} initial={{ opacity: 0, scale: 2 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0 }} transition={{ duration: 0.4 }} className="text-[12rem] font-black text-red-500 drop-shadow-[0_0_80px_rgba(220,38,38,0.8)]">
+          <motion.div 
+             key={introPhase}
+             initial={{ opacity: 0, scale: 2 }} 
+             animate={{ opacity: 1, scale: 1 }} 
+             exit={{ opacity: 0, scale: 0 }}
+             transition={{ duration: 0.4 }}
+             className="text-[12rem] font-black text-red-500 drop-shadow-[0_0_80px_rgba(220,38,38,0.8)]"
+          >
             {introPhase.split('_')[1]}
           </motion.div>
         )}
+
         {introPhase === 'countdown_go' && (
-           <motion.div initial={{ opacity: 0, scale: 0.5, rotate: -10 }} animate={{ opacity: 1, scale: 1.5, rotate: 0 }} transition={{ type: "spring", stiffness: 200 }} className="text-[10rem] md:text-[14rem] font-black text-red-500 drop-shadow-[0_0_100px_rgba(220,38,38,1)] tracking-tighter">
+           <motion.div 
+             initial={{ opacity: 0, scale: 0.5, rotate: -10 }} 
+             animate={{ opacity: 1, scale: 1.5, rotate: 0 }} 
+             transition={{ type: "spring", stiffness: 200 }}
+             className="text-[10rem] md:text-[14rem] font-black text-red-500 drop-shadow-[0_0_100px_rgba(220,38,38,1)] tracking-tighter"
+           >
              GO!
            </motion.div>
         )}
+
       </div>
     );
-  };
+  }
 
-  const renderFinished = () => {
-     const winner = room?.players?.find((p: any) => !p.isEliminated);
+  // State: Game Over (Finished)
+  if (room && room.status === 'finished') {
+     const winner = room.players.find((p: any) => !p.isEliminated);
      const amIWinner = winner?.id === userId;
 
      return (
        <div className="min-h-screen z-50 bg-stone-950 text-stone-100 flex flex-col items-center justify-center p-6 text-center overflow-hidden relative">
           <div className={`absolute top-[30%] left-[20%] w-[500px] h-[500px] ${amIWinner ? 'bg-yellow-900/40' : 'bg-red-900/40'} rounded-full blur-[150px] pointer-events-none`}></div>
-          <motion.h1 initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className={`text-6xl md:text-8xl font-black ${amIWinner ? 'text-yellow-500 drop-shadow-[0_0_60px_rgba(234,179,8,0.8)]' : 'text-red-600 drop-shadow-[0_0_60px_rgba(220,38,38,0.8)]'} mb-8 tracking-tighter`}>
+          
+          <motion.h1 
+             initial={{ scale: 0.5, opacity: 0 }}
+             animate={{ scale: 1, opacity: 1 }}
+             transition={{ type: "spring", bounce: 0.5 }}
+             className={`text-6xl md:text-8xl font-black ${amIWinner ? 'text-yellow-500 drop-shadow-[0_0_60px_rgba(234,179,8,0.8)]' : 'text-red-600 drop-shadow-[0_0_60px_rgba(220,38,38,0.8)]'} mb-8 tracking-tighter`}
+          >
              {amIWinner ? 'SELAMAT!' : 'GAME OVER'}
           </motion.h1>
+
           <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.5 }} className="flex flex-col items-center gap-4">
             {amIWinner ? (
                <>
                  <div className="text-[6rem] leading-none mb-4 animate-bounce drop-shadow-[0_0_30px_rgba(234,179,8,1)]">🏆</div>
-                 <p className="text-2xl md:text-4xl text-stone-300 font-bold">Anda adalah <span className="font-black text-yellow-500 uppercase tracking-widest">Pemenangnya!</span></p>
+                 <p className="text-2xl md:text-4xl text-stone-300 font-bold">
+                   Anda adalah <span className="font-black text-yellow-500 uppercase tracking-widest">Pemenangnya!</span>
+                 </p>
                  <p className="text-stone-400 mt-2">Daya imajinasi Anda tidak tertandingi.</p>
                </>
             ) : winner ? (
                <>
                  <div className="text-[4rem] leading-none mb-2 drop-shadow-[0_0_30px_rgba(0,0,0,1)] grayscale opacity-50">💀</div>
-                 <p className="text-xl md:text-3xl text-stone-300">Pemenangnya adalah <span className="font-black text-white uppercase tracking-widest">{winner.name}</span>!</p>
-                 <p className="text-stone-500 mt-2">Anda tereliminasi. Coba lagi!</p>
+                 <p className="text-xl md:text-3xl text-stone-300">
+                   Pemenangnya adalah <span className="font-black text-white uppercase tracking-widest">{winner.name}</span>!
+                 </p>
+                 <p className="text-stone-500 mt-2">Anda tereliminasi. Coba lagi di lain waktu!</p>
                </>
-            ) : <p className="text-xl md:text-3xl text-stone-300">Semua pemain tereliminasi.</p>}
+            ) : (
+               <p className="text-xl md:text-3xl text-stone-300">
+                 Semua pemain telah tereliminasi.
+               </p>
+            )}
           </motion.div>
-          <motion.button initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 1.5 }} onClick={() => router.push('/')} className={`mt-16 ${amIWinner ? 'bg-yellow-600 hover:bg-yellow-500' : 'bg-red-600 hover:bg-red-500'} text-white font-bold py-4 px-10 rounded-xl uppercase tracking-widest transition-all z-10 shadow-lg`}>
+
+          <motion.button 
+             initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 1.5 }}
+             onClick={() => router.push('/')} 
+             className={`mt-16 ${amIWinner ? 'bg-yellow-600 hover:bg-yellow-500 shadow-[0_0_30px_rgba(234,179,8,0.4)]' : 'bg-red-600 hover:bg-red-500 shadow-[0_0_30px_rgba(220,38,38,0.4)]'} text-white font-bold py-4 px-10 rounded-xl uppercase tracking-widest transition-all z-10`}
+          >
              Ke Menu Utama
           </motion.button>
        </div>
      );
-  };
+  }
 
-  const renderPlaying = () => {
+  // State: Sedang Bermain (Playing)
+  if (room && room.status === 'playing') {
     return (
       <div className="min-h-screen bg-stone-900 text-stone-100 p-6 md:p-12 font-sans overflow-x-hidden overflow-y-auto w-full relative">
         <h2 className="text-3xl font-black mb-4 text-center tracking-widest text-red-500 uppercase">Arena Bermain</h2>
+
         <div className="flex flex-col md:flex-row gap-6 max-w-7xl mx-auto w-full items-start">
+           
+           {/* KIRI - ARENA PERMAINAN PUSAT */}
            <div className="flex-1 w-full flex flex-col items-center">
+              {/* Daftar Pemain Aktif / Eliminasi */}
               <div className="flex flex-wrap items-center justify-center gap-3 w-full mb-10">
-                 {room?.players?.map((player: any) => (
-                    <div key={player.id} className={`flex items-center gap-2 px-4 py-2 rounded-full border transition-all ${room.turnOrder[room.currentTurnIndex] === player.id ? 'border-red-500 bg-red-900/30' : 'border-stone-700 bg-stone-800'} ${player.isEliminated ? 'opacity-40 grayscale' : ''}`}>
-                       <span className="text-sm font-bold flex items-center gap-2">{player.isEliminated ? '💀' : '😁'} <span>{player.name} {player.id === userId && '(Kamu)'}</span></span>
-                       {room.turnOrder[room.currentTurnIndex] === player.id && !player.isEliminated && <span className="flex h-2.5 w-2.5 rounded-full bg-red-500 animate-ping"></span>}
-                    </div>
-                 ))}
+                 {room.players.map((player: any) => {
+                    const isTurn = room.turnOrder[room.currentTurnIndex] === player.id;
+                    const isDead = player.isEliminated;
+                    return (
+                      <div key={player.id} className={`flex items-center gap-2 px-4 py-2 rounded-full border transition-all duration-300 ${isTurn ? 'border-red-500 bg-red-900/30 ring-2 ring-red-500/50' : 'border-stone-700 bg-stone-800'} ${isDead ? 'opacity-40 grayscale border-stone-800' : ''}`}>
+                         <span className="text-sm font-bold flex items-center gap-2">
+                             {isDead ? '💀' : '😁'} 
+                             <span className={isDead ? 'line-through text-stone-500' : 'text-stone-200'}>{player.name} {player.id === userId && '(Kamu)'}</span>
+                         </span>
+                         {isTurn && !isDead && <span className="flex h-2.5 w-2.5 rounded-full bg-red-500 animate-ping"></span>}
+                      </div>
+                    )
+                 })}
               </div>
+
               <div className="grid grid-cols-2 md:grid-cols-3 gap-6 items-start w-full max-w-4xl">
+                 {/* 1. Gambar Tumpukan Kartu Deck */}
                  <div className="flex flex-col items-center">
-                    <motion.img src={BACK_CARD_URL} className="w-full aspect-[2/3] object-cover rounded-xl shadow-xl border-2 border-stone-800" />
-                    <span className="mt-3 text-xs font-bold text-stone-500 bg-stone-800 px-3 py-1 rounded-full uppercase">Sisa: {room?.deck?.length || 0}</span>
+                    <motion.img 
+                       src={BACK_CARD_URL} 
+                       alt="Tumpukan Deck"
+                       className="w-full aspect-[2/3] object-cover rounded-xl shadow-[0_0_20px_rgba(0,0,0,0.6)] border-2 border-stone-800"
+                    />
+                    <span className="mt-3 text-xs font-bold text-stone-500 bg-stone-800 px-3 py-1 rounded-full uppercase tracking-widest">
+                       Sisa Deck: {room.deck?.length || 0}
+                    </span>
                  </div>
-                 {room?.centerCards?.map((cCard: any, idx: number) => (
-                    <motion.div key={`center-${idx}`} initial={{ rotateY: -180, opacity: 0 }} animate={{ rotateY: 0, opacity: 1 }} className="flex flex-col items-center gap-3 w-full">
-                       <img src={cCard.card[0].imageUrl} className="w-full aspect-[2/3] object-cover rounded-xl shadow-lg border-2 border-stone-700" />
-                       <div className="bg-stone-800 border border-stone-700 p-3 rounded-lg w-full text-sm text-center italic text-stone-300">
+
+                 {/* 2 & 3 & seterusnya... Render Kartu Center/Meja */}
+                 {room.centerCards?.map((cCard: any, idx: number) => (
+                    <motion.div 
+                       key={`center-${idx}`}
+                       initial={{ rotateY: -180, opacity: 0 }}
+                       animate={{ rotateY: 0, opacity: 1 }}
+                       transition={{ duration: 0.6, type: "spring", bounce: 0.3 }}
+                       style={{ transformStyle: "preserve-3d", perspective: 1200 }}
+                       className="flex flex-col items-center gap-3 w-full"
+                    >
+                       <img 
+                          src={cCard.card[0].imageUrl} 
+                          alt={`Kartu Center ${idx + 1}`}
+                          className="w-full aspect-[2/3] object-cover rounded-xl shadow-[0_0_20px_rgba(220,38,38,0.2)] border-2 border-stone-700"
+                       />
+                       <div className="bg-stone-800/80 backdrop-blur border border-stone-700 p-3 rounded-lg w-full text-sm text-center italic text-stone-300">
                           &quot;{cCard.story}&quot;
-                          <div className="mt-2 text-[10px] text-red-400 font-bold uppercase">- {cCard.playerName}</div>
+                          <div className="mt-2 text-[10px] text-red-400 font-bold tracking-wider not-italic uppercase">- {cCard.playerName}</div>
                        </div>
                     </motion.div>
                  ))}
-                 {activeDrawnCard && !room?.votingState?.active && (
-                    <motion.div initial={{ scale: 0.8, opacity: 0, y: 50 }} animate={{ scale: 1, opacity: 1, y: 0 }} className="flex flex-col items-center gap-3 col-span-2 md:col-span-1 w-full">
-                       <img src={activeDrawnCard.imageUrl} className="w-[80%] md:w-full aspect-[2/3] object-cover rounded-xl shadow-2xl border-2 border-red-500" />
+
+                 {/* Grid Tambahan Khusus Kartu yang Sedang Aktif di Tangan */}
+                 {activeDrawnCard && !room.votingState?.active && (
+                    <motion.div 
+                       initial={{ scale: 0.8, opacity: 0, y: 50 }}
+                       animate={{ scale: 1, opacity: 1, y: 0 }}
+                       className="flex flex-col items-center gap-3 col-span-2 md:col-span-1 w-full"
+                    >
+                       <img 
+                          src={activeDrawnCard.imageUrl}
+                          alt="Kartu Di Tangan"
+                          className="w-[80%] md:w-full aspect-[2/3] object-cover rounded-xl shadow-[0_0_40px_rgba(220,38,38,0.4)] border-2 border-red-500 relative"
+                       />
                        {isMyTurn ? (
                          <div className="w-full flex-col flex gap-2">
-                            <textarea value={storyInput} onChange={e => setStoryInput(e.target.value)} className="w-full bg-stone-950 border border-red-900/50 rounded-xl p-3 text-sm focus:border-red-500 text-stone-100 resize-none" rows={4} placeholder="Lanjutkan cerita..." />
-                            <button onClick={submitStory} disabled={!storyInput.trim() || isSubmitting} className="w-full bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-xl uppercase tracking-widest text-xs transition-shadow">
+                            <label className="text-[10px] text-stone-400 font-bold uppercase tracking-widest text-center mt-2">
+                               Cerita harus nyambung dari awal mula kartu!
+                            </label>
+                            <textarea 
+                               value={storyInput}
+                               onChange={e => setStoryInput(e.target.value)}
+                               className="w-full bg-stone-950 border border-red-900/50 rounded-xl p-3 text-sm focus:outline-none focus:border-red-500 text-stone-100 resize-none shadow-inner"
+                               rows={4}
+                               placeholder="Ketik kelanjutan cerita di sini..."
+                            />
+                            <button 
+                               onClick={submitStory}
+                               disabled={!storyInput.trim() || isSubmitting}
+                               className="w-full bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-xl uppercase tracking-widest text-xs disabled:opacity-50 transition-colors shadow-lg"
+                            >
                                {isSubmitting ? 'Mengirim...' : 'Submit Cerita'}
                             </button>
                          </div>
-                       ) : <div className="w-full bg-stone-800 border border-stone-700 rounded-xl p-4 text-center mt-4 text-xs text-stone-400 uppercase tracking-widest">Menunggu Pemain...</div>}
+                       ) : (
+                         <div className="w-full bg-stone-800/80 border border-stone-700/50 rounded-xl p-4 text-center mt-4 flex items-center justify-center gap-2">
+                            <Loader2 className="w-4 h-4 text-red-500 animate-spin" />
+                            <span className="text-xs text-stone-400 font-bold tracking-widest uppercase">
+                               Menunggu pemain bercerita...
+                            </span>
+                         </div>
+                       )}
                     </motion.div>
                  )}
               </div>
            </div>
-           <div className="w-full md:w-80 lg:w-96 shrink-0 mt-10 md:mt-0 h-[500px]">{renderChatBox()}</div>
+
+           {/* KANAN - LIVE CHAT */}
+           <div className="w-full md:w-80 lg:w-96 shrink-0 mt-10 md:mt-0 flex flex-col relative h-[500px]">
+              {renderChatBox()}
+           </div>
+
         </div>
-        {room?.votingState?.active && (
+
+        {/* Jika ruang sudah masuk mode voting / menunggu giliran lain */}
+        {room.votingState?.active && (
            <div className="fixed inset-0 z-50 bg-stone-950/90 backdrop-blur-md flex items-center justify-center p-4">
-              <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-stone-900 border border-stone-700 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl">
+              <motion.div 
+                 initial={{ scale: 0.9, opacity: 0, y: 20 }}
+                 animate={{ scale: 1, opacity: 1, y: 0 }}
+                 className="bg-stone-900 border border-stone-700/50 rounded-2xl w-full max-w-lg overflow-hidden shadow-[0_0_100px_rgba(0,0,0,1)]"
+              >
+                 <div className="bg-red-900/20 border-b border-red-900/30 px-6 py-4">
+                    <h3 className="text-xl font-black text-white uppercase tracking-widest">Sesi Voting</h3>
+                    <p className="text-red-400 text-xs font-bold uppercase tracking-wider mt-1">{room.votingState.playerName} memainkan kartu ini!</p>
+                 </div>
                  <div className="p-6 flex flex-col items-center">
-                    <img src={room.votingState.card.imageUrl} className="w-48 aspect-[2/3] object-cover rounded-xl shadow-2xl border-4 border-stone-800" />
-                    <div className="bg-stone-800 border border-stone-700 w-full mt-6 p-4 rounded-xl text-center italic text-stone-200">&quot;{room.votingState.story}&quot;</div>
+                    <img 
+                       src={room.votingState.card.imageUrl} 
+                       alt="Voting Card" 
+                       className="w-48 aspect-[2/3] object-cover rounded-xl shadow-2xl border-4 border-stone-800 -mt-2 z-10"
+                    />
+                    <div className="bg-stone-800/50 border border-stone-700 w-full mt-6 p-4 rounded-xl text-center italic text-stone-200">
+                       &quot;{room.votingState.story}&quot;
+                    </div>
+
                     <div className="w-full mt-8">
-                       {room.votingState.playerId === userId ? <div className="text-center py-4 text-stone-400 uppercase tracking-widest text-sm">Menunggu Hasil...</div> :
-                        (userId && typeof room.votingState.votes?.[userId] !== 'undefined') ? <div className="text-center py-4 text-stone-400 uppercase tracking-widest text-sm">Voted!</div> :
-                        <div className="grid grid-cols-2 gap-4">
-                           <button onClick={() => castVote('no')} className="bg-stone-800 text-red-500 border border-red-900/50 py-4 rounded-xl uppercase font-bold tracking-widest">❌ Ngga</button>
-                           <button onClick={() => castVote('yes')} className="bg-green-600/20 text-green-500 border border-green-500/30 py-4 rounded-xl uppercase font-bold tracking-widest">✅ Nyambung</button>
-                        </div>}
+                       {room.votingState.playerId === userId ? (
+                          <div className="text-center bg-stone-800 py-4 rounded-xl text-stone-400 font-bold tracking-widest text-sm uppercase animate-pulse border border-stone-700">
+                             Menunggu hasil voting...
+                          </div>
+                       ) : (userId && typeof room.votingState.votes?.[userId] !== 'undefined') ? (
+                          <div className="text-center bg-stone-800 py-4 rounded-xl text-stone-400 font-bold tracking-widest text-sm uppercase border border-stone-700">
+                             Menunggu pemain lain memvoting...
+                          </div>
+                       ) : (
+                          <div className="grid grid-cols-2 gap-4">
+                             <button onClick={() => castVote('no')} className="bg-stone-800 hover:bg-stone-700 text-red-500 border border-red-900/50 font-bold py-4 rounded-xl uppercase tracking-widest transition-all">
+                                ❌ Ngga Nyambung
+                             </button>
+                             <button onClick={() => castVote('yes')} className="bg-green-600/20 hover:bg-green-600/30 text-green-500 border border-green-500/30 font-bold py-4 rounded-xl uppercase tracking-widest transition-all">
+                                ✅ Nyambung
+                             </button>
+                          </div>
+                       )}
                     </div>
                  </div>
               </motion.div>
            </div>
         )}
+
+        {/* Animasi Kematian Layar Penuh (Sekali Jalan) */}
         {showDeathAnim && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center bg-red-950/90 backdrop-blur-sm pointer-events-none">
-             <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }} className="text-center flex flex-col items-center">
-                <span className="text-[8rem] leading-none mb-4">💀</span>
-                <h1 className="text-5xl font-black text-red-500 uppercase tracking-tight">Tereliminasi!</h1>
+             <motion.div initial={{ scale: 0, rotate: -10 }} animate={{ scale: 1, rotate: 0 }} exit={{ scale: 0 }} transition={{ type: 'spring', bounce: 0.6 }} className="text-center flex flex-col items-center">
+                <span className="text-[8rem] leading-none mb-4 drop-shadow-[0_0_50px_rgba(220,38,38,0.8)]">💀</span>
+                <h1 className="text-5xl md:text-7xl font-black text-red-500 drop-shadow-[0_0_40px_rgba(220,38,38,1)] uppercase tracking-tight">Tereliminasi!</h1>
+                <p className="text-stone-300 mt-4 font-bold tracking-widest uppercase bg-stone-900 px-6 py-2 rounded-full border border-red-900/50">Ceritamu Tidak Diterima</p>
              </motion.div>
           </div>
         )}
-        {amIEliminated && <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-stone-900 border border-red-900/50 text-red-400 px-6 py-3 rounded-full z-40 text-xs font-bold tracking-widest uppercase">💀 Kamu Tereliminasi</div>}
-      </div>
-    );
-  };
 
-  // === MAIN RENDER LOGIC ===
-  if (loading && !room) {
-    return (
-      <div className="min-h-screen bg-stone-900 flex items-center justify-center text-red-500">
-        <Loader2 className="w-12 h-12 animate-spin" />
+        {/* Banner Persisten Eliminasi */}
+        {amIEliminated && (
+          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-stone-900 border border-red-900/50 text-red-400 px-6 py-3 rounded-full z-40 shadow-[0_0_30px_rgba(220,38,38,0.4)] text-xs md:text-sm font-bold tracking-widest uppercase whitespace-nowrap opacity-90 backdrop-blur">
+             💀 Kamu Tereliminasi - Tetaplah Memvoting!
+          </div>
+        )}
       </div>
     );
   }
 
-  if (error) {
-    return (
-      <div className="min-h-screen bg-stone-900 flex flex-col items-center justify-center p-8 text-center text-stone-100">
-        <div className="bg-stone-800 p-8 rounded-2xl border border-red-900/50 max-w-md">
-          <p className="text-red-400 mb-6">{error}</p>
-          <button onClick={() => router.push('/')} className="bg-stone-700 px-6 py-2 rounded-lg">Kembali</button>
-        </div>
-      </div>
-    );
-  }
-
-  if (!agoraClientInstance) {
-    return (
-      <div className="min-h-screen bg-stone-900 flex items-center justify-center text-red-500 flex-col gap-4">
-        <Loader2 className="w-12 h-12 animate-spin" />
-        <p className="text-stone-500 text-sm font-bold tracking-widest uppercase">Menyiapkan Voice...</p>
-      </div>
-    );
-  }
+  // State: Layar LOBBY (Status: waiting)
+  const isHost = room.hostId === userId;
+  const playerCount = room.players.length;
 
   return (
-    <AgoraRTCProvider client={agoraClientInstance}>
-      {room?.status === 'intro' ? renderIntro() : 
-       room?.status === 'playing' ? renderPlaying() :
-       room?.status === 'finished' ? renderFinished() :
-       renderLobby()}
-      
-      {userId && (
-        <AgoraVoiceChat 
-          roomId={roomId} 
-          userId={userId} 
-          isJoined={isVoiceJoined}
-          micOn={isMicOn}
-          setIsJoined={setIsVoiceJoined}
-          setMicOn={setIsMicOn}
-          inGame={true} 
-        />
-      )}
+    <AgoraRTCProvider client={agoraClient}>
+      <div className="min-h-screen w-full bg-stone-900 text-stone-100 font-sans flex items-center justify-center overflow-hidden relative">
+      {/* Decorative Background */}
+      <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
+        <div className="absolute top-[20%] left-[10%] w-96 h-96 bg-red-800 rounded-full blur-[150px]"></div>
+      </div>
+
+      <div className="z-10 w-full max-w-5xl px-4 md:px-6 py-10 md:py-0 h-screen overflow-y-auto md:h-auto md:overflow-visible flex flex-col justify-start md:justify-center">
+        
+        {/* LOBBY HEADER */}
+        <div className="text-center mb-10">
+          <div className="inline-flex items-center justify-center px-4 py-1.5 bg-stone-800 border border-stone-700 rounded-full mb-6">
+            <span className="text-xs font-bold tracking-widest text-stone-400 uppercase mr-3">
+              Kode Room
+            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-xl font-mono font-black text-red-500 tracking-[0.2em]">
+                {roomId}
+              </span>
+              <button 
+                onClick={handleCopy}
+                className="text-stone-400 hover:text-stone-100 transition-colors bg-stone-700/50 p-1.5 rounded-md"
+                title="Copy Kode"
+              >
+                {copied ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+          <h1 className="text-4xl font-black tracking-tighter">LOBI PERMAINAN</h1>
+          <p className="text-stone-400 text-sm mt-2">
+            Pemain sedang berkumpul. Sambil menunggu, siapkan fokus dan strategi Anda.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-6 w-full pb-10 md:pb-0">
+          {/* KOLOM KIRI: DAFTAR PEMAIN & ACTION */}
+          <div className="md:col-span-7 flex flex-col gap-6">
+            
+            {/* DAFTAR PEMAIN */}
+            <div className="bg-stone-800/50 backdrop-blur-md rounded-2xl border border-stone-700 p-6 shadow-2xl">
+              <div className="flex items-center justify-between mb-6 border-b border-stone-700 pb-4">
+            <h2 className="text-xs font-bold text-stone-500 tracking-widest uppercase flex items-center gap-2">
+              <Users className="w-4 h-4" /> Daftar Pemain
+            </h2>
+            <span className="text-xs font-bold text-stone-500 bg-stone-900 px-3 py-1 rounded">
+              {playerCount} / 6 MAX
+            </span>
+          </div>
+
+          <div className="space-y-3">
+            {room.players.map((player: any) => {
+              const isPlayerHost = player.id === room.hostId;
+              const isMe = player.id === userId;
+              
+              return (
+                <div 
+                  key={player.id} 
+                  className={`flex items-center justify-between p-4 rounded-xl border transition-all ${
+                    isMe ? 'bg-stone-700/30 border-stone-600' : 'bg-stone-900/50 border-stone-800'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-stone-700 border-2 border-stone-600 flex items-center justify-center">
+                      <span className="text-xs font-bold text-stone-400">
+                        {player.name.charAt(0).toUpperCase()}
+                      </span>
+                    </div>
+                    <span className={`font-semibold ${isMe ? 'text-white' : 'text-stone-300'}`}>
+                      {player.name} {isMe && <span className="text-stone-500 text-xs font-normal ml-2">(Kamu)</span>}
+                    </span>
+                  </div>
+
+                  {isPlayerHost && (
+                    <div className="flex items-center gap-1.5 bg-red-600/10 text-red-500 px-3 py-1 rounded text-xs font-bold tracking-widest uppercase border border-red-500/20">
+                      <Crown className="w-3.5 h-3.5" /> Host
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+            {/* HOST ACTION */}
+            <div className="text-center bg-stone-800/30 p-6 rounded-2xl border border-stone-700/50">
+              {isHost ? (
+                <button
+                  onClick={startGame}
+                  className="w-full sm:w-auto bg-red-600 hover:bg-red-700 text-white font-bold tracking-wider uppercase px-12 py-4 rounded-xl shadow-lg shadow-red-900/20 transition-all flex items-center justify-center gap-3 mx-auto group"
+                >
+                  <Play className="w-5 h-5 fill-current" />
+                  Mulai Game
+                </button>
+              ) : (
+                <div className="inline-flex items-center gap-2 text-stone-500 text-sm font-medium tracking-wide bg-stone-900/50 px-6 py-3 rounded-full border border-stone-700">
+                  <Loader2 className="w-4 h-4 animate-spin text-red-600" />
+                  Menunggu Host memulai game...
+                </div>
+              )}
+
+              {/* Tombol Keluar Manual */}
+              <button 
+                onClick={handleLeaveRoom}
+                className="mt-5 flex items-center justify-center gap-2 w-full max-w-[200px] mx-auto text-stone-500 hover:text-red-500 transition-colors text-xs uppercase tracking-widest font-bold"
+              >
+                <LogOut className="w-4 h-4" /> Keluar dari Lobi
+              </button>
+            </div>
+          </div>
+
+          {/* KOLOM KANAN: LIVE CHAT */}
+          <div className="md:col-span-5 flex flex-col h-[500px]">
+             {renderChatBox()}
+          </div>
+        </div>
+
+        {userId && (
+           <AgoraVoiceChat 
+             roomId={roomId} 
+             userId={userId} 
+             isJoined={isVoiceJoined}
+             micOn={isMicOn}
+             setIsJoined={setIsVoiceJoined}
+             setMicOn={setIsMicOn}
+             inGame={room?.status === 'waiting' || room?.status === 'playing' || room?.status === 'intro'} 
+           />
+        )}
+      </div>
+    </div>
     </AgoraRTCProvider>
   );
 }
